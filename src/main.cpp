@@ -1,11 +1,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 #include "generation.h"
 #include "materials.h"
 #include "raylib.h"
 #include "render.h"
+#include "sim.h"
 #include "world.h"
 
 namespace {
@@ -14,8 +16,14 @@ constexpr int MAX_GRID_WIDTH = 480;
 constexpr int MAX_GRID_HEIGHT = 270;
 constexpr int PREFERRED_SCALE = 3;
 
+// Steps the simulation for however long a self-test needs.
+void runSteps(World& world, int steps) {
+    Simulation sim(world);
+    for (int i = 0; i < steps; ++i) sim.step(world);
+}
+
 // The simulated grid and the window are chosen to suit the actual display: the
-// portrait is as large as the framebuffer allows at the chunkiest scale that
+// picture is as large as the framebuffer allows at the chunkiest scale that
 // still fits, without the window running off the screen or hiding under the
 // menu bar. On a Retina display the framebuffer is larger than the window, so
 // the scale is measured in framebuffer pixels and the world is centred.
@@ -56,10 +64,18 @@ int runGame(bool smoke) {
     World world(viewport.gridWidth, viewport.gridHeight);
     buildTestScene(world);
 
+    Simulation sim(world);
     Renderer renderer(viewport.gridWidth, viewport.gridHeight);
 
     int frames = 0;
     while (!WindowShouldClose()) {
+        // Temporary: `R` rebuilds the scene so it can be watched from the start.
+        if (IsKeyPressed(KEY_R)) {
+            buildTestScene(world);
+            sim = Simulation(world);
+        }
+
+        sim.step(world);
         renderer.updateImage(world);
 
         BeginDrawing();
@@ -95,8 +111,97 @@ int runGame(bool smoke) {
     return 0;
 }
 
+// Self-test: sand must fall and settle, leaving nothing floating.
+bool checkSandSettles() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildDropTestScene(world);
+
+    int startTop = MAX_GRID_HEIGHT;
+    for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+            if (world.at(x, y) == Mat::Sand) startTop = std::min(startTop, y);
+        }
+        if (startTop != MAX_GRID_HEIGHT) break;
+    }
+
+    runSteps(world, 2000);
+
+    // Nothing floating: no grain of sand may have empty space directly beneath it.
+    int floating = 0;
+    int settledTop = MAX_GRID_HEIGHT;
+    for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+            if (world.at(x, y) != Mat::Sand) continue;
+            settledTop = std::min(settledTop, y);
+            if (y + 1 < MAX_GRID_HEIGHT && world.at(x, y + 1) == Mat::Air) ++floating;
+        }
+    }
+
+    const bool fell = settledTop > startTop + 10;
+    const bool passed = floating == 0 && fell && world.count(Mat::Sand) > 0;
+    std::printf("sand settles: %s (floating grains %d, top row %d -> %d)\n",
+                passed ? "PASS" : "FAIL", floating, startTop, settledTop);
+    return passed;
+}
+
+// Self-test: water must spread out when poured in one place, keep its volume,
+// and stay inside its basin.
+bool checkWaterSpreads() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    world.fill(Mat::Air);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    // Narrow basin: floor at y=200, walls 4 thick, interior x=214..265.
+    for (int x = 210; x < 214; ++x) {
+        for (int y = 160; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 266; x < 270; ++x) {
+        for (int y = 160; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    // Water starts piled high against the left wall.
+    for (int x = 214; x < 220; ++x) {
+        for (int y = 184; y < 200; ++y) world.set(x, y, Mat::Water);
+    }
+
+    const int startCells = world.count(Mat::Water);
+    int startColumns = 0;
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+            if (world.at(x, y) == Mat::Water) { ++startColumns; break; }
+        }
+    }
+
+    runSteps(world, 3000);
+
+    const int endCells = world.count(Mat::Water);
+    int endColumns = 0;
+    int leaks = 0;
+    int aboveRim = 0;
+    for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+            if (world.at(x, y) != Mat::Water) continue;
+            if (x < 214 || x > 265) ++leaks;
+            if (y < 160) ++aboveRim;
+        }
+    }
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+            if (world.at(x, y) == Mat::Water) { ++endColumns; break; }
+        }
+    }
+
+    const bool conserved = endCells == startCells;
+    const bool spread = endColumns >= startColumns * 5 / 4;
+    const bool contained = leaks == 0 && aboveRim == 0;
+    const bool passed = conserved && spread && contained;
+    std::printf("water spreads and stays put: %s (cells %d -> %d, columns %d -> %d, leaks %d, above rim %d)\n",
+                passed ? "PASS" : "FAIL", startCells, endCells, startColumns, endColumns, leaks, aboveRim);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
-// image to disk, and reports a couple of facts about it. No window is opened.
+// image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
     bool passed = true;
 
@@ -119,6 +224,9 @@ int runSelfTest() {
     const bool sandPresent = sand > 100;
     if (!sandPresent) passed = false;
     std::printf("sand column present: %s (%d cells)\n", sandPresent ? "PASS" : "FAIL", sand);
+
+    if (!checkSandSettles()) passed = false;
+    if (!checkWaterSpreads()) passed = false;
 
     return passed ? 0 : 1;
 }

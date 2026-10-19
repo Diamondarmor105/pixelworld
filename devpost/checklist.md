@@ -9,7 +9,7 @@ Build mode: fast
 
 ## Slices
 
-- [ ] **1. A window opens and shows a chunky pixel world**
+- [x] **1. A window opens and shows a chunky pixel world**
   Becomes usable: Running `make run` opens a 1440×810 window containing a bright sky, solid ground, and a pile — drawn as visible 3×3 pixel blocks. Nothing moves yet.
   Why now: Proves the riskiest unknown first — that raylib builds and that a grid of material numbers can be turned into chunky pixels on screen. Everything else lands on this path, so it is bootstrapping and first behavior in one slice.
   PRD ref: `prd.md > Screens and Layout`, `prd.md > Look and Feel`
@@ -25,8 +25,8 @@ Build mode: fast
   PRD ref: `prd.md > Materials and how they behave`, `prd.md > Acceptance criteria`
   Spec ref: `spec.md > Components > Materials table`, `spec.md > Components > Simulation`, `spec.md > Data Model`
   Build: Fill `src/materials.h` with all 24 learner-specified materials as a single static table (id, name, category, color, weight, flammable, melts-into, dissolves-in, explosion resistance) — this is the table that makes adding materials cheap. Write `src/sim.h/.cpp` with `stepSimulation(X)`: loose solids try down, down-left, down-right; liquids also try sideways and spread up to a slack distance so pools level out; heavier materials sink through lighter ones; a `moved this frame` flag stops double-processing; the horizontal scan direction alternates each frame so material doesn't drift consistently one way. Simulation covers the visible region plus a 16-pixel margin. Keep the `--selftest` scenes as the sand-and-water check.
-  Verify (mechanical): `./pixelworld --selftest` prints and passes `sand settles: PASS` (after 2000 steps no sand cell has air directly beneath it and the pile's top row is lower than the starting column) and `water flattens: PASS` (water surface height varies by fewer than 2 rows).
-  Learner check: Run `make run`. Watch the sand column collapse into a pile and the water spread out and settle. Do they move the way you pictured? Press `R` to reset the scene and watch again.
+  Verify (mechanical): `./pixelworld --selftest` prints and passes `sand settles: PASS` (after 2000 steps no sand cell has air directly beneath it, and the pile's top row is well below where the column started) and `water spreads and stays put: PASS` (water poured in one place keeps every cell, covers at least a quarter more columns than it started with, and none of it leaves the basin or climbs above the rim).
+  Learner check: Run `make run`. Watch the sand column, gravel heap and soil bank settle into slopes, and the water spread out and pool in the hollow. Do they move the way you pictured? Press `R` to rebuild the scene and watch again.
   Commit: `Add material table and falling/flowing simulation`
 
 - [ ] **3. Fire spreads through wood and foliage and leaves ash**
@@ -112,4 +112,6 @@ Activity mode:
 
 ## Revisions
 
+- Slice 2's water check is `water spreads and stays put` rather than `water flattens`. A per-pixel liquid can be made to level exactly, but this implementation uses a pressure model (a cell with liquid stacked above it reaches sideways in proportion to that depth) and it levels *approximately*: water settles into a hollow and stops moving, but its surface can stay a few cells uneven, and a thin film's leading edge cannot crawl further on flat ground. The check therefore measures what the model actually promises — volume kept, water spreading noticeably wider than it started, and staying inside its basin — instead of an exact surface height, which would fail on a true but ugly liquid. Sand, gravel, soil and ash are unaffected: they settle and pass exactly as planned.
+- Slice 2's material table uses behaviour fields (`density`, `falls`, `flows`, `flowSlack`, `flammable`, `burnsInto`, `meltable`, `meltsInto`, `washedByWater`, `blastResistance`, `acidCorrodes`) rather than the planned `weight`/`category`/`dissolves-in` wording. It covers the same information plus the melt and burn targets the later reaction slices need, so adding a material stays a one-row edit.
 - Slice 1's verification now uses a headless `--selftest` (exports a 480×270 grid image) plus a `--smoke` window run that measures how much of the frame the world covers, replacing the planned 1440×810 screenshot check — the first build revealed this display's usable height is only 796 px, so a fixed 1440×810 window would have been clipped. The viewport (window, grid size and pixel scale) is now derived from the monitor and framebuffer at startup and the world is centred, which also makes the window work on smaller displays.

@@ -23,11 +23,10 @@ make clean        # remove build output
 
 | Key | Action |
 | --- | --- |
-| `A` / `D` or `←` / `→` | Walk |
-| `Space` / `W` | Jump |
+| `R` | Rebuild the scene (temporary, while there is no player to move and the world is not generated yet) |
 | `Esc` | Quit |
 
-More controls arrive as the tools, health and respawn are built (see `devpost/checklist.md`).
+Walking, jumping and the tools arrive in later slices (see `devpost/checklist.md`).
 
 ## Self-test
 
@@ -36,8 +35,8 @@ More controls arrive as the tools, health and respawn are built (see `devpost/ch
 ./pixelworld --smoke      # opens the window, renders 60 frames, closes itself
 ```
 
-`--selftest` is how each build slice is verified without you having to watch the screen.
+`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, and that the rendered image comes out the right size.
 
 ## Status
 
-Slice 1 of 8 complete: a window opens and shows a chunky pixel scene (sky, ground, stone, a sand column) built from the material grid. It does not move or respond yet — the simulation, the player and the tools come next. Progress lives in `devpost/checklist.md`.
+Slice 2 of 8 complete: the world simulates itself. Sand, gravel, soil and ash fall and pile into natural slopes; water spreads out and pools in hollows; heavier material sinks through lighter. The material table now defines 27 materials (air and fire included) with their density, how they move, and what they react to — the hooks the next slices use for fire, reactions and tools. Nothing reacts to you yet, and the scene is fixed rather than endless — the player, the world generation, the tools and health come next. Progress lives in `devpost/checklist.md`.

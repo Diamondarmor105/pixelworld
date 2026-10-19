@@ -1,0 +1,16 @@
+# Personal learning context — kept out of commits by default
+/devpost/learner-profile.md
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# OS noise
+.DS_Store
+
+# Build output
+/pixelworld
+/pixelworld-debug
+/selftest.png
+/smoke.png

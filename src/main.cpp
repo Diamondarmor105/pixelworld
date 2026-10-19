@@ -1,0 +1,139 @@
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+
+#include "generation.h"
+#include "materials.h"
+#include "raylib.h"
+#include "render.h"
+#include "world.h"
+
+namespace {
+
+constexpr int MAX_GRID_WIDTH = 480;
+constexpr int MAX_GRID_HEIGHT = 270;
+constexpr int PREFERRED_SCALE = 3;
+
+// The simulated grid and the window are chosen to suit the actual display: the
+// portrait is as large as the framebuffer allows at the chunkiest scale that
+// still fits, without the window running off the screen or hiding under the
+// menu bar. On a Retina display the framebuffer is larger than the window, so
+// the scale is measured in framebuffer pixels and the world is centred.
+struct Viewport {
+    int gridWidth;
+    int gridHeight;
+    int scale;
+    int offsetX;
+    int offsetY;
+};
+
+Viewport chooseViewport() {
+    const int framebufferWidth = GetRenderWidth();
+    const int framebufferHeight = GetRenderHeight();
+
+    const int gridWidth = std::min(MAX_GRID_WIDTH, std::max(320, framebufferWidth / PREFERRED_SCALE));
+    const int gridHeight = std::min(MAX_GRID_HEIGHT, std::max(200, framebufferHeight / PREFERRED_SCALE));
+
+    const int scale = std::max(1, std::min(framebufferWidth / gridWidth, framebufferHeight / gridHeight));
+
+    return Viewport{gridWidth, gridHeight, scale,
+                    (framebufferWidth - gridWidth * scale) / 2,
+                    (framebufferHeight - gridHeight * scale) / 2};
+}
+
+// Opens the window and runs the main loop. In smoke mode it closes itself after
+// a fixed number of frames so it can be checked from the command line.
+int runGame(bool smoke) {
+    const int monitor = GetCurrentMonitor();
+    const int windowWidth = std::min(MAX_GRID_WIDTH * PREFERRED_SCALE, GetMonitorWidth(monitor) - 80);
+    const int windowHeight = std::min(MAX_GRID_HEIGHT * PREFERRED_SCALE, GetMonitorHeight(monitor) - 120);
+
+    InitWindow(windowWidth, windowHeight, "Pixel World");
+    SetTargetFPS(60);
+
+    const Viewport viewport = chooseViewport();
+
+    World world(viewport.gridWidth, viewport.gridHeight);
+    buildTestScene(world);
+
+    Renderer renderer(viewport.gridWidth, viewport.gridHeight);
+
+    int frames = 0;
+    while (!WindowShouldClose()) {
+        renderer.updateImage(world);
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        renderer.drawScaled(viewport.scale, viewport.offsetX, viewport.offsetY);
+        EndDrawing();
+
+        ++frames;
+        if (smoke && frames >= 60) {
+            std::printf("window %dx%d (render %dx%d) | grid %dx%d | scale %d | frames %d\n",
+                        GetScreenWidth(), GetScreenHeight(), GetRenderWidth(), GetRenderHeight(),
+                        viewport.gridWidth, viewport.gridHeight, viewport.scale, frames);
+            TakeScreenshot("smoke.png");
+
+            // Read the frame back and measure how much of the window the world
+            // actually covers, so a mis-scaled or clipped render cannot pass.
+            Image shot = LoadImageFromScreen();
+            Color* pixels = static_cast<Color*>(shot.data);
+            const int total = shot.width * shot.height;
+            int painted = 0;
+            for (int i = 0; i < total; ++i) {
+                const Color c = pixels[i];
+                if (c.r > 24 || c.g > 24 || c.b > 24) ++painted;
+            }
+            std::printf("world covers %d of %d pixels (%.1f%%)\n", painted, total,
+                        100.0 * static_cast<double>(painted) / total);
+            UnloadImage(shot);
+            break;
+        }
+    }
+
+    CloseWindow();
+    return 0;
+}
+
+// Headless check: builds the scene, renders it into an image buffer, writes that
+// image to disk, and reports a couple of facts about it. No window is opened.
+int runSelfTest() {
+    bool passed = true;
+
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildTestScene(world);
+
+    Renderer renderer(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    renderer.updateImage(world);
+    ExportImage(renderer.image(), "selftest.png");
+
+    std::printf("grid %dx%d | wrote selftest.png\n", renderer.image().width, renderer.image().height);
+
+    const int sky = world.count(Mat::Air);
+    const int ground = world.count(Mat::PackedDirt) + world.count(Mat::Stone) + world.count(Mat::Bedrock);
+    const bool skyAbove = sky > 0 && ground > 0 && sky + ground < static_cast<int>(world.cellCount());
+    if (!skyAbove) passed = false;
+    std::printf("sky and ground both present: %s\n", skyAbove ? "PASS" : "FAIL");
+
+    const int sand = world.count(Mat::Sand);
+    const bool sandPresent = sand > 100;
+    if (!sandPresent) passed = false;
+    std::printf("sand column present: %s (%d cells)\n", sandPresent ? "PASS" : "FAIL", sand);
+
+    return passed ? 0 : 1;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    bool smoke = false;
+    bool selftest = false;
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--selftest") == 0) selftest = true;
+        else if (std::strcmp(argv[i], "--smoke") == 0) smoke = true;
+    }
+
+    if (selftest) return runSelfTest();
+    return runGame(smoke);
+}

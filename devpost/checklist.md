@@ -19,7 +19,7 @@ Build mode: fast
   Learner check: Run `make run`. You should see a bright sky, brown ground, and a visible pile of sand grains, each one a chunky block — not blurry. Press Esc to close. Does it look like a pixel world yet?
   Commit: `Add window, pixel grid, and chunky renderer`
 
-- [ ] **2. Gravity works: sand, gravel and water move on their own**
+- [x] **2. Gravity works: sand, gravel and water move on their own**
   Becomes usable: Grains fall, pile up with a natural slope, and water spreads out and pools in hollows — no clicking required.
   Why now: This is the first real piece of the kernel. Everything else in the project is a different rule applied to this same per-pixel step, so it must exist and be trustworthy before anything is layered on it.
   PRD ref: `prd.md > Materials and how they behave`, `prd.md > Acceptance criteria`
@@ -29,7 +29,7 @@ Build mode: fast
   Learner check: Run `make run`. Watch the sand column, gravel heap and soil bank settle into slopes, and the water spread out and pool in the hollow. Do they move the way you pictured? Press `R` to rebuild the scene and watch again.
   Commit: `Add material table and falling/flowing simulation`
 
-- [ ] **3. Fire spreads through wood and foliage and leaves ash**
+- [x] **3. Fire spreads through wood and foliage and leaves ash**
   Becomes usable: You can set something alight and watch it take hold and crawl across it on its own, leaving burnt ground and ash behind.
   Why now: This is the "oh, that's cool" beat from the scope and the second half of the kernel — the world changing by itself after you stop clicking. It is the earliest point where the project proves its own idea, so learner feedback here can still shape everything after it.
   PRD ref: `prd.md > Materials and how they behave`, `prd.md > What the player sees when they succeed`
@@ -112,6 +112,7 @@ Activity mode:
 
 ## Revisions
 
+- Slice 3's fire is a probabilistic, burn-in-place model rather than the planned "flammable material turns into fire, then to ash". A flammable cell that catches keeps its own material and is given a `life` counter set from its `burnTime`; while `life` is positive the cell is drawn as flickering flame and spreads to its neighbours, and when `life` runs out it becomes its `burnsInto` (ash for wood, bark, leaves, mycelium and fungal caps; air for oil). Brushed-on flames are separate `Fire` cells that live a fixed `FIRE_LIFE` (8) ticks. Each neighbour catches with a probability per tick (`igniteChance`, 0–255) drawn from a repeatable per-cell hash, so fire creeps outward organically instead of advancing as a hard line — and the self-test burns the same way every run because of that reproducibility. "Oil burns faster and spreads further" is the short `burnTime`, high `igniteChance`, and the fact that flowing materials also ignite their diagonals.
 - Slice 2's water check is `water spreads and stays put` rather than `water flattens`. A per-pixel liquid can be made to level exactly, but this implementation uses a pressure model (a cell with liquid stacked above it reaches sideways in proportion to that depth) and it levels *approximately*: water settles into a hollow and stops moving, but its surface can stay a few cells uneven, and a thin film's leading edge cannot crawl further on flat ground. The check therefore measures what the model actually promises — volume kept, water spreading noticeably wider than it started, and staying inside its basin — instead of an exact surface height, which would fail on a true but ugly liquid. Sand, gravel, soil and ash are unaffected: they settle and pass exactly as planned.
 - Slice 2's material table uses behaviour fields (`density`, `falls`, `flows`, `flowSlack`, `flammable`, `burnsInto`, `meltable`, `meltsInto`, `washedByWater`, `blastResistance`, `acidCorrodes`) rather than the planned `weight`/`category`/`dissolves-in` wording. It covers the same information plus the melt and burn targets the later reaction slices need, so adding a material stays a one-row edit.
 - Slice 1's verification now uses a headless `--selftest` (exports a 480×270 grid image) plus a `--smoke` window run that measures how much of the frame the world covers, replacing the planned 1440×810 screenshot check — the first build revealed this display's usable height is only 796 px, so a fixed 1440×810 window would have been clipped. The viewport (window, grid size and pixel scale) is now derived from the monitor and framebuffer at startup and the world is centred, which also makes the window work on smaller displays.

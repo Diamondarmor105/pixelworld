@@ -62,6 +62,8 @@ struct MaterialInfo {
     bool flows;               // liquid: spreads sideways and pools
     uint8_t flowSlack;        // caps how far a liquid reaches sideways, in cells per tick
     bool flammable;           // catches fire from an adjacent flame
+    uint8_t burnTime;         // ticks a burning cell lasts before it becomes `burnsInto`
+    uint8_t igniteChance;     // 0..255 chance per burning neighbour per tick of catching
     Mat burnsInto;            // what is left after burning
     bool meltable;            // turns to `meltsInto` when fire or lava is adjacent
     Mat meltsInto;
@@ -70,8 +72,16 @@ struct MaterialInfo {
     bool acidCorrodes;        // acid eats through this material
 };
 
+// How long a flame from a spark, explosion or the temporary debug brush lasts,
+// in ticks. This is the `life` of a Mat::Fire cell.
+constexpr uint8_t FIRE_LIFE = 8;
+
 // Returns the description of a material. Out-of-range values fall back to Air.
 const MaterialInfo& materialInfo(Mat m);
+
+// True if this cell is currently on fire: a flame, or a flammable material
+// whose `life` is ticking down.
+bool isBurning(Mat m, uint8_t life);
 
 inline bool isAir(Mat m) { return m == Mat::Air; }
 

@@ -26,9 +26,25 @@ public:
         return static_cast<Mat>(cells_[static_cast<size_t>(y) * width_ + x]);
     }
 
+    // Placing a material clears the cell's life counter; the simulation sets
+    // life again for cells that are on fire.
     void set(int x, int y, Mat m) {
         if (!inBounds(x, y)) return;
-        cells_[static_cast<size_t>(y) * width_ + x] = static_cast<uint8_t>(m);
+        const size_t index = static_cast<size_t>(y) * width_ + x;
+        cells_[index] = static_cast<uint8_t>(m);
+        life_[index] = 0;
+    }
+
+    // Per-cell counter used to time how long fire and burning material last.
+    // 0 means "not burning"; a positive value counts down each tick.
+    uint8_t life(int x, int y) const {
+        if (!inBounds(x, y)) return 0;
+        return life_[static_cast<size_t>(y) * width_ + x];
+    }
+
+    void setLife(int x, int y, uint8_t value) {
+        if (!inBounds(x, y)) return;
+        life_[static_cast<size_t>(y) * width_ + x] = value;
     }
 
     void fill(Mat m);
@@ -38,8 +54,12 @@ public:
     // Counts how many cells currently hold the given material.
     int count(Mat m) const;
 
+    // Counts how many cells are currently on fire (flames plus burning fuel).
+    int burningCount() const;
+
 private:
     int width_;
     int height_;
     std::vector<uint8_t> cells_;
+    std::vector<uint8_t> life_;
 };

@@ -29,6 +29,38 @@ void buildGround(World& world) {
     }
 }
 
+// A simple tree: a trunk of wood with bark on its edges, and a rounded canopy of
+// foliage. `groundY` is the surface row the trunk stands on.
+void buildTree(World& world, int trunkX, int groundY, int trunkHeight, int canopyRadius) {
+    const int trunkTop = groundY - trunkHeight;
+    for (int y = trunkTop; y < groundY; ++y) {
+        for (int dx = 0; dx < 4; ++dx) {
+            const bool edge = (dx == 0 || dx == 3);
+            world.set(trunkX + dx, y, edge ? Mat::Bark : Mat::Wood);
+        }
+    }
+
+    const int canopyX = trunkX + 1;
+    const int canopyY = trunkTop - canopyRadius / 3;
+    for (int dy = -canopyRadius; dy <= canopyRadius / 2; ++dy) {
+        for (int dx = -canopyRadius; dx <= canopyRadius; ++dx) {
+            const float nx = static_cast<float>(dx) / static_cast<float>(canopyRadius);
+            const float ny = static_cast<float>(dy) / (static_cast<float>(canopyRadius) * 0.75f);
+            if (nx * nx + ny * ny <= 1.0f) world.set(canopyX + dx, canopyY + dy, Mat::Foliage);
+        }
+    }
+}
+
+// A fallen log lying on the ground, so there is loose wood to set alight.
+void buildLog(World& world, int startX, int endX, int groundY) {
+    for (int x = startX; x < endX; ++x) {
+        for (int dy = 0; dy < 3; ++dy) {
+            const bool edge = (dy == 0 || dy == 2);
+            world.set(x, groundY - 1 - dy, edge ? Mat::Bark : Mat::Wood);
+        }
+    }
+}
+
 }  // namespace
 
 void buildTestScene(World& world) {
@@ -86,6 +118,44 @@ void buildTestScene(World& world) {
             world.set(x, y, Mat::Water);
         }
     }
+
+    // An oil slick floating on the left of the pool. Oil is lighter than water,
+    // so the simulation sorts the two out and the oil rises to the surface.
+    for (int x = poolCenter - 26; x < poolCenter - 6; ++x) {
+        const int surface = surfaceRow(x, height);
+        for (int y = surface; y < surface + 3; ++y) {
+            world.set(x, y, Mat::Oil);
+        }
+    }
+
+    // Two trees and a fallen log, to burn.
+    buildTree(world, width * 42 / 100, surfaceRow(width * 42 / 100, height), 34, 14);
+    buildTree(world, width * 90 / 100, surfaceRow(width * 90 / 100, height), 26, 11);
+    buildLog(world, width * 84 / 100, width * 84 / 100 + 18, surfaceRow(width * 84 / 100, height));
+}
+
+void buildBurnTestScene(World& world) {
+    const int width = world.width();
+    const int height = world.height();
+
+    world.fill(Mat::Air);
+
+    // Stone floor across the bottom.
+    for (int x = 0; x < width; ++x) {
+        for (int y = height - 6; y < height; ++y) {
+            world.set(x, y, Mat::Stone);
+        }
+    }
+
+    // A standing block of wood, lit at the bottom centre.
+    const int cx = width / 2;
+    const int bottom = height - 7;
+    for (int y = bottom - 20; y <= bottom; ++y) {
+        for (int x = cx - 15; x <= cx + 15; ++x) {
+            world.set(x, y, Mat::Wood);
+        }
+    }
+    world.setLife(cx, bottom, materialInfo(Mat::Wood).burnTime);
 }
 
 void buildDropTestScene(World& world) {
@@ -107,40 +177,6 @@ void buildDropTestScene(World& world) {
     for (int y = bottom - 24; y <= bottom; ++y) {
         for (int x = cx - 12; x <= cx + 12; ++x) {
             world.set(x, y, Mat::Sand);
-        }
-    }
-}
-
-void buildPoolTestScene(World& world) {
-    const int width = world.width();
-    const int height = world.height();
-
-    world.fill(Mat::Air);
-
-    const int floorTop = height - 60;
-
-    // Stone floor and two walls, making a wide basin.
-    for (int x = 0; x < width; ++x) {
-        for (int y = floorTop; y < height; ++y) {
-            world.set(x, y, Mat::Stone);
-        }
-    }
-    for (int x = 60; x < 66; ++x) {
-        for (int y = floorTop - 40; y < floorTop; ++y) {
-            world.set(x, y, Mat::Stone);
-        }
-    }
-    for (int x = width - 66; x < width - 60; ++x) {
-        for (int y = floorTop - 40; y < floorTop; ++y) {
-            world.set(x, y, Mat::Stone);
-        }
-    }
-
-    // Water starts as a tall column on the left of the basin, and has to spread
-    // out and find its own level.
-    for (int x = 80; x < 130; ++x) {
-        for (int y = floorTop - 38; y < floorTop; ++y) {
-            world.set(x, y, Mat::Water);
         }
     }
 }

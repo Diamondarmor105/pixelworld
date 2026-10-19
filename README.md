@@ -23,6 +23,7 @@ make clean        # remove build output
 
 | Key | Action |
 | --- | --- |
+| Left mouse | Set fire, to watch it spread (temporary debug brush — the real tools arrive in slice 7) |
 | `R` | Rebuild the scene (temporary, while there is no player to move and the world is not generated yet) |
 | `Esc` | Quit |
 
@@ -35,8 +36,8 @@ Walking, jumping and the tools arrive in later slices (see `devpost/checklist.md
 ./pixelworld --smoke      # opens the window, renders 60 frames, closes itself
 ```
 
-`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, and that the rendered image comes out the right size.
+`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, that fire spreads through a block of wood and burns it down to ash, and that the rendered image comes out the right size.
 
 ## Status
 
-Slice 2 of 8 complete: the world simulates itself. Sand, gravel, soil and ash fall and pile into natural slopes; water spreads out and pools in hollows; heavier material sinks through lighter. The material table now defines 27 materials (air and fire included) with their density, how they move, and what they react to — the hooks the next slices use for fire, reactions and tools. Nothing reacts to you yet, and the scene is fixed rather than endless — the player, the world generation, the tools and health come next. Progress lives in `devpost/checklist.md`.
+Slice 3 of 8 complete: fire burns. Wood, bark, leaves, mycelium, fungal caps and oil catch alight, spread the flames to what is next to them, burn for as long as their material allows, and leave ash (or nothing, for oil) behind. The scene now has two trees, a fallen log and an oil slick on the pond to set alight; hold the left mouse button to start a fire and watch it crawl and leave ash. The material table's 27 rows each carry their own burn speed and how easily they catch. Nothing reacts to you yet and the scene is fixed rather than endless — the player, the world generation, the tools and health come next. Progress lives in `devpost/checklist.md`.

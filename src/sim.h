@@ -6,15 +6,18 @@
 #include "world.h"
 
 // The per-pixel physics. One call to step() advances the whole world by one
-// tick: every loose solid and liquid gets one chance to fall or flow.
+// tick: fire spreads, then every loose solid and liquid gets one chance to fall
+// or flow.
 //
 // Rules (see devpost/spec.md > Components > Simulation):
+//   * Fire spreads to neighbouring flammable cells (see their `igniteChance`),
+//     burns for as long as their `burnTime`, then leaves `burnsInto` behind.
 //   * A loose solid tries straight down, then down-left, then down-right.
-//   * A liquid does the same, then also tries sideways, and looks along the
-//     surface up to `flowSlack` cells for somewhere lower to go, so pools find
-//     their own level instead of heaping up.
+//   * A liquid rolls down a slope, then spreads sideways as far as the liquid
+//     stacked on top of it allows, so deep water pushes out to find its level.
 //   * A material can move into empty space, or swap with a lighter loose solid
-//     or liquid, so sand sinks through water.
+//     or liquid, so sand sinks through water and burning oil keeps burning as
+//     it flows.
 //   * Anything that moved is marked for the rest of the tick, so nothing moves
 //     twice in one frame.
 //   * The horizontal scan direction alternates each tick, so material does not

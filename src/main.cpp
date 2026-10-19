@@ -49,6 +49,24 @@ Viewport chooseViewport() {
                     (framebufferHeight - gridHeight * scale) / 2};
 }
 
+// Temporary debug brush: sets fire where the mouse is held. The real tools
+// replace this in slice 7. Flame is only painted onto air or something that can
+// burn, so it does not carve holes in solid ground.
+void paintFire(World& world, int cx, int cy, int radius) {
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy > radius * radius) continue;
+            const int x = cx + dx;
+            const int y = cy + dy;
+            const Mat m = world.at(x, y);
+            if (m == Mat::Air || materialInfo(m).flammable) {
+                world.set(x, y, Mat::Fire);
+                world.setLife(x, y, FIRE_LIFE);
+            }
+        }
+    }
+}
+
 // Opens the window and runs the main loop. In smoke mode it closes itself after
 // a fixed number of frames so it can be checked from the command line.
 int runGame(bool smoke) {
@@ -73,6 +91,15 @@ int runGame(bool smoke) {
         if (IsKeyPressed(KEY_R)) {
             buildTestScene(world);
             sim = Simulation(world);
+        }
+
+        // Temporary debug brush: hold the left mouse button to set fire to the
+        // wood and leaves. Replaced by real tools in slice 7.
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            const Vector2 mouse = GetMousePosition();
+            const int gx = static_cast<int>((mouse.x - viewport.offsetX) / viewport.scale);
+            const int gy = static_cast<int>((mouse.y - viewport.offsetY) / viewport.scale);
+            paintFire(world, gx, gy, 3);
         }
 
         sim.step(world);
@@ -200,6 +227,28 @@ bool checkWaterSpreads() {
     return passed;
 }
 
+// Self-test: fire must spread through a block of wood, burn it down and go out,
+// leaving ash behind.
+bool checkFireSpreads() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildBurnTestScene(world);
+
+    const int startWood = world.count(Mat::Wood);
+    runSteps(world, 400);
+
+    const int endWood = world.count(Mat::Wood);
+    const int ash = world.count(Mat::Ash);
+    const int burning = world.burningCount();
+
+    const bool burned = endWood <= startWood * 2 / 5;   // at least 60% gone
+    const bool leftAsh = ash > 0;                       // burning wood leaves ash
+    const bool wentOut = burning <= startWood / 50;     // the fire does not burn forever
+    const bool passed = burned && leftAsh && wentOut;
+    std::printf("fire spreads: %s (wood %d -> %d, ash %d, still burning %d)\n",
+                passed ? "PASS" : "FAIL", startWood, endWood, ash, burning);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -227,6 +276,7 @@ int runSelfTest() {
 
     if (!checkSandSettles()) passed = false;
     if (!checkWaterSpreads()) passed = false;
+    if (!checkFireSpreads()) passed = false;
 
     return passed ? 0 : 1;
 }

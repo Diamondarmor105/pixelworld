@@ -35,11 +35,90 @@ bool trySwap(World& world, std::vector<uint8_t>& moved, int x, int y, int tx, in
     const Mat into = world.at(tx, ty);
     if (!canDisplace(from, into)) return false;
 
+    // `life` travels with the material: burning oil keeps burning as it flows.
+    const uint8_t lifeFrom = world.life(x, y);
+    const uint8_t lifeInto = world.life(tx, ty);
+
     world.set(x, y, into);
     world.set(tx, ty, from);
+    world.setLife(x, y, lifeInto);
+    world.setLife(tx, ty, lifeFrom);
+
     markMoved(world, moved, x, y);
     markMoved(world, moved, tx, ty);
     return true;
+}
+
+// A repeatable pseudo-random value for one cell on one tick. The self-test
+// depends on scenes burning the same way every run.
+uint32_t noise(int x, int y, int frame) {
+    uint32_t h = static_cast<uint32_t>(x) * 73856093u ^
+                 static_cast<uint32_t>(y) * 19349663u ^
+                 static_cast<uint32_t>(frame) * 83492791u;
+    h ^= h >> 13;
+    h *= 0x5bd1e995u;
+    h ^= h >> 15;
+    return h;
+}
+
+bool roll(int x, int y, int frame, int chance) {
+    if (chance <= 0) return false;
+    if (chance >= 255) return true;
+    return static_cast<int>(noise(x, y, frame) & 0xFFu) < chance;
+}
+
+// A flammable cell next to a flame may catch. How likely, and how long it then
+// burns for, come from the material's table row.
+void tryIgnite(World& world, int x, int y, int frame) {
+    const Mat m = world.at(x, y);
+    const MaterialInfo& info = materialInfo(m);
+    if (!info.flammable || info.burnTime == 0) return;
+    if (world.life(x, y) > 0) return;  // already alight
+    if (roll(x, y, frame, info.igniteChance)) world.setLife(x, y, info.burnTime);
+}
+
+// Flames reach the four neighbours, and for materials that flow (oil, and later
+// lava) the diagonals too, so fire creeps further through a liquid.
+void spreadFire(World& world, int x, int y, int frame, bool includeDiagonals) {
+    tryIgnite(world, x + 1, y, frame);
+    tryIgnite(world, x - 1, y, frame);
+    tryIgnite(world, x, y + 1, frame);
+    tryIgnite(world, x, y - 1, frame);
+    if (includeDiagonals) {
+        tryIgnite(world, x + 1, y + 1, frame);
+        tryIgnite(world, x - 1, y + 1, frame);
+        tryIgnite(world, x + 1, y - 1, frame);
+        tryIgnite(world, x - 1, y - 1, frame);
+    }
+}
+
+// Fire and burning fuel age by one tick, spread to whatever is next to them, and
+// - when their time runs out - turn into their `burnsInto` (ash for wood and
+// leaves, nothing for oil).
+void updateFire(World& world, int frame) {
+    const int width = world.width();
+    const int height = world.height();
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const Mat m = world.at(x, y);
+            const uint8_t life = world.life(x, y);
+
+            if (m == Mat::Fire) {
+                spreadFire(world, x, y, frame, false);
+                if (life <= 1) world.set(x, y, Mat::Air);
+                else world.setLife(x, y, life - 1);
+                continue;
+            }
+
+            const MaterialInfo& info = materialInfo(m);
+            if (!info.flammable || life == 0) continue;
+
+            spreadFire(world, x, y, frame, info.flows);
+            if (life <= 1) world.set(x, y, info.burnsInto);
+            else world.setLife(x, y, life - 1);
+        }
+    }
 }
 
 // A liquid that has liquid stacked on top of it is under pressure. It scans up
@@ -108,6 +187,9 @@ void Simulation::step(World& world) {
 
     if (moved_.size() != world.cellCount()) moved_.assign(world.cellCount(), 0);
     std::fill(moved_.begin(), moved_.end(), 0);
+
+    // Reactions first (fire spreads and burns out), then movement.
+    updateFire(world, frame_);
 
     // Bottom row first, so a falling cell lands before the cell above it moves.
     const int dir = (frame_ % 2 == 0) ? 1 : -1;

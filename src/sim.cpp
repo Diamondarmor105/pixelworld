@@ -328,6 +328,34 @@ bool updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
     // the surface grain that jitters in place.
     if (!info.flows) return false;
 
+    // A cell on the surface of a settled pool has nothing left to do.
+    //
+    // It cannot fall and it cannot roll, so the only move the rules leave it is
+    // the sideways shuffle - and on a flat surface that shuffle achieves
+    // nothing. Neighbouring surface cells simply trade places, every tick,
+    // forever. Measured on a wide shallow pool, this was the whole remaining
+    // source of a moving surface: of the cells that still moved, 25 of 34 could
+    // not fall or roll at all, and 40 of 68 moves crossed into a cell whose
+    // direction preference pointed the other way.
+    //
+    // The test is deliberately narrow, so that real spreading is untouched. The
+    // cell must be sitting ON liquid - part of a pool's surface, not on the
+    // floor - and it must have no downward escape on either side. A cell on the
+    // floor is left alone even when boxed in, because it may still be creeping
+    // outward to reach lower ground further along, and stopping it there was
+    // measured to hold a pool back from spreading (41 columns of spread fell to
+    // 24, and the shallow-heap check failed).
+    //
+    // The cheapest test is first: most cells can fall straight down, and are
+    // gone on one comparison.
+    if (world.at(x, y + 1) != Mat::Air && materialInfo(world.at(x, y + 1)).flows) {
+        const bool leftOpen = world.at(x - 1, y) == Mat::Air && world.at(x - 1, y + 1) == Mat::Air;
+        if (!leftOpen) {
+            const bool rightOpen = world.at(x + 1, y) == Mat::Air && world.at(x + 1, y + 1) == Mat::Air;
+            if (!rightOpen) return false;
+        }
+    }
+
     // 3. Sideways at the same row, so a pool spreads out instead of piling up.
     //
     //    A plain step into empty space, or shoving a lighter grain aside. The

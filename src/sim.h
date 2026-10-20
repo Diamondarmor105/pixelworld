@@ -31,8 +31,12 @@ struct SimRect {
 //     all: there is no pressure, no depth measurement and no periodic tidying
 //     pass. Water therefore behaves like a very slippery granular material - it
 //     runs downhill and spreads out, but a pile of it settles as a heap rather
-//     than finding a dead-flat level, and a few surface pixels can shuffle back
-//     and forth. That is deliberate: the rules stay short enough to explain.
+//     than finding a dead-flat level. A liquid that has nowhere to fall and
+//     nowhere to roll - so it is part of a settled pool's surface - takes no
+//     sideways step at all, because on a flat surface that step only ever trades
+//     places with a neighbour and makes the surface shimmer. A liquid resting on
+//     the ground rather than on liquid is left free to keep creeping outward, so
+//     a pool can still spread to find its level.
 //   * A material can move into empty space, or swap with a lighter loose solid
 //     or liquid, so sand sinks through water and burning oil keeps burning as
 //     it flows. A liquid that cannot fall or step aside shoves a lighter grain

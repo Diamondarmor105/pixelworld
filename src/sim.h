@@ -27,20 +27,22 @@ struct SimRect {
 //   * Fire spreads to neighbouring flammable cells (see their `igniteChance`),
 //     burns for as long as their `burnTime`, then leaves `burnsInto` behind.
 //   * A loose solid tries straight down, then down-left, then down-right.
-//   * A liquid rolls down a slope, then spreads sideways as far as the liquid
-//     stacked on top of it allows, so deep water pushes out to find its level.
-//     A SURFACE cell (nothing liquid stacked on it) also steps toward the
-//     nearest deeper column in reach; a cell with liquid above it only moves
-//     under pressure, never for levelling. Every LEVEL_INTERVAL ticks a body of
-//     liquid that has gone quiet is tidied to a genuinely level surface in one
-//     step, conserving its volume.
+//   * A liquid tries straight down, then down-diagonal, then sideways. That is
+//     all: there is no pressure, no depth measurement and no periodic tidying
+//     pass. Water therefore behaves like a very slippery granular material - it
+//     runs downhill and spreads out, but a pile of it settles as a heap rather
+//     than finding a dead-flat level, and a few surface pixels can shuffle back
+//     and forth. That is deliberate: the rules stay short enough to explain.
 //   * A material can move into empty space, or swap with a lighter loose solid
 //     or liquid, so sand sinks through water and burning oil keeps burning as
-//     it flows.
+//     it flows. A liquid that cannot fall or step aside shoves a lighter grain
+//     out of the way instead.
 //   * Anything that moved is marked for the rest of the tick, so nothing moves
 //     twice in one frame.
-//   * The horizontal scan direction alternates each tick, so material does not
-//     drift consistently to one side.
+//   * A tick runs the rules in two sweeps: bottom-up (which does the falling)
+//     then top-down (which spreads material sideways into the gaps the first
+//     sweep left). The horizontal scan direction alternates each tick, so
+//     material does not drift consistently to one side.
 class Simulation {
 public:
     explicit Simulation(const World& world);
@@ -56,5 +58,8 @@ public:
 
 private:
     std::vector<uint8_t> moved_;
+    // Rows the falling sweep moved something in. The sideways sweep only
+    // revisits these, so a still or empty scene does not pay for a second pass.
+    std::vector<uint8_t> dirtyRows_;
     int frame_ = 0;
 };

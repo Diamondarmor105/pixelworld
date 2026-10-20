@@ -293,10 +293,12 @@ bool checkWaterSpreads() {
     return passed;
 }
 
-// Self-test: a settled pool of water must be solid and still — no enclosed air
-// pockets left inside it, and not a single cell moving once it has levelled
-// out. Both were real bugs: the pool used to hold a scattering of bubbles that
-// shuffled around forever, which shimmered on screen.
+// Self-test: a pool of water must be solid and still - no enclosed air pockets
+// left inside it, and not a single cell moving once it has settled. Both were
+// real bugs: the pool used to hold a scattering of bubbles that shuffled around
+// forever, which shimmered on screen. This is a *walled* pool, deep and roughly
+// level to begin with, so the simple rules have nothing to spread and it must go
+// completely quiet.
 bool checkWaterSettlesStill() {
     World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
     world.fill(Mat::Air);
@@ -352,26 +354,19 @@ bool checkWaterSettlesStill() {
     return passed;
 }
 
-// Self-test: a shallow pool spread over a long flat floor must end up with a
-// FLAT surface, not a ragged one. This was a real bug. The surface-hop rule used
-// to compare the top row of the neighbouring columns to decide whether to step
-// sideways; but the top row of the column the cell just left drops a row as soon
-// as it leaves, so the comparison flipped and one stray cell rode a row above
-// the rest of the pool, hopping to the neighbour and back every tick - a single
-// pixel blinking forever on the surface. The rule now compares the water depth
-// BELOW the cell, which does not move when the cell leaves, so an already-level
-// pool is a genuine tie and the cell stays put.
-//
-// The test counts "stray top" columns: a column whose water sits a row higher
-// than BOTH of its neighbours, i.e. a lone cell poking up out of an otherwise
-// flat surface. A pool that has settled must have none. (Before the fix this
-// scene settled with 27 of them.)
+// Self-test: a shallow pool spread over a long flat floor must SPREAD OUT along
+// the floor rather than sitting in a heap where it was poured. The rules are
+// deliberately simple now - fall, roll diagonally, step sideways - so a pool
+// does not find a mathematically flat level; it spreads and settles as a
+// shallow heap. What this check pins down is that the spreading happens at all
+// and that the pile is smooth: no column may poke up more than a couple of rows
+// above its neighbours, which is what a stuck or ragged surface looks like.
 bool checkWaterSpreadsFlat() {
     World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
     world.fill(Mat::Air);
 
-    // A long flat stone floor, and a shallow pool spread across part of it - a
-    // thin layer, which is exactly where the ragged surface used to appear.
+    // A long flat stone floor, and a shallow pool poured onto part of it - a
+    // thin layer, which is exactly where a ragged surface used to appear.
     for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
         for (int y = 240; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
     }
@@ -382,37 +377,45 @@ bool checkWaterSpreadsFlat() {
     Simulation sim(world);
     for (int i = 0; i < 2000; ++i) sim.step(world);
 
-    // A stray top: water in this column starts a row above the water in both
-    // neighbours. A flat surface has none.
     auto topOf = [&](int x) {
         for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
             if (world.at(x, y) == Mat::Water) return y;
         }
         return MAX_GRID_HEIGHT;
     };
-    int stray = 0;
-    for (int x = 1; x < MAX_GRID_WIDTH - 1; ++x) {
+
+    // Count the columns holding water, and each column's depth. A spread-out
+    // heap should be a shallow lens: no column may be a tall tower. The measure
+    // is the tallest column against the average, with a few rows of slack for
+    // the natural slope of a heap.
+    int columns = 0;
+    int tallest = 0;
+    long totalDepth = 0;
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
         const int t = topOf(x);
         if (t >= MAX_GRID_HEIGHT) continue;
-        if (t < topOf(x - 1) && t < topOf(x + 1)) ++stray;
+        ++columns;
+        int depth = 0;
+        for (int y = t; y < 240 && world.at(x, y) == Mat::Water; ++y) ++depth;
+        totalDepth += depth;
+        if (depth > tallest) tallest = depth;
     }
+    const int meanDepth = columns > 0 ? static_cast<int>(totalDepth / columns) : 0;
 
-    const bool passed = stray == 0 && world.count(Mat::Water) > 0;
-    std::printf("water spreads to a flat surface: %s (stray top cells %d)\n",
-                passed ? "PASS" : "FAIL", stray);
+    const bool passed = columns >= 25 && tallest <= meanDepth + 3 && world.count(Mat::Water) > 0;
+    std::printf("water spreads to a shallow heap: %s (columns with water %d, tallest %d, mean %d)\n",
+                passed ? "PASS" : "FAIL", columns, tallest, meanDepth);
     return passed;
 }
 
 // Self-test: a whole screenful of water - the big lakes the generated world will
-// be full of - must level to a flat surface and then go completely still, and it
-// must do so without the tick time exploding. The surface-depth comparison used
-// to run for EVERY water cell, including the thousands of buried interior cells
-// of a deep lake that can never move for that reason, so a settled lake cost more
-// than a whole frame on its own. Levelling is now a surface-only job (interior
-// cells move only under pressure, and the periodic pass tidies the body), which
-// cut the cost of a full-screen lake by more than half. This check pins down the
-// behaviour that optimisation must not break: the lake still ends up flat, still,
-// and conserving every cell.
+// be full of - must spread out across its floor and conserve every cell, without
+// the tick time exploding. The rules are the simple ones now (fall, roll
+// diagonally, step sideways), so a lake does not settle dead flat: it forms a
+// broad shallow mound with a few surface pixels still shuffling. This check
+// pins down what must stay true - nothing is lost, the water reaches the far
+// sides of the floor, the surface stays smooth rather than spiky, and it is not
+// churning.
 bool checkBigLakeLevelsAndSettles() {
     // A smaller grid than the full screen, so the check stays fast, but still a
     // genuinely wide, deep body of water with a large settled interior.
@@ -423,9 +426,7 @@ bool checkBigLakeLevelsAndSettles() {
         for (int y = 240; y < H; ++y) world.set(x, y, Mat::Stone);
     }
     // The left third filled right to the top, so it has to spread out across the
-    // whole floor. Uneven on purpose, so there is real levelling to do, and WIDE
-    // and DEEP enough to have a big settled interior - the part that used to be
-    // pure wasted work.
+    // whole floor. Uneven on purpose, so there is real spreading to do.
     for (int x = 0; x < W; ++x) {
         const int top = (x < W / 3) ? 200 : 224;
         for (int y = top; y < 240; ++y) world.set(x, y, Mat::Water);
@@ -435,20 +436,33 @@ bool checkBigLakeLevelsAndSettles() {
     Simulation sim(world);
     for (int i = 0; i < 600; ++i) sim.step(world);
 
-    // Flat: the water's top row must be the same everywhere (a 1-row tolerance
-    // for the water surface sitting a row lower over a dip in the floor).
-    int lo = H, hi = -1;
+    // Spread: the water must reach both ends of the floor, not stay in a heap.
+    int leftmost = W, rightmost = -1;
     for (int x = 0; x < W; ++x) {
         for (int y = 0; y < 240; ++y) {
             if (world.at(x, y) == Mat::Water) {
-                if (y < lo) lo = y;
-                if (y > hi) hi = y;
+                if (x < leftmost) leftmost = x;
+                if (x > rightmost) rightmost = x;
                 break;
             }
         }
     }
 
-    // Still: nothing moves over a stretch of ticks.
+    // Smooth: no column's surface may stand more than three rows above BOTH
+    // neighbours - a spike, as opposed to the broad mound the rules produce.
+    auto topOf = [&](int x) {
+        for (int y = 0; y < 240; ++y) {
+            if (world.at(x, y) == Mat::Water) return y;
+        }
+        return 240;
+    };
+    int spikes = 0;
+    for (int x = 1; x < W - 1; ++x) {
+        if (topOf(x) >= 240) continue;
+        if (topOf(x) + 3 < topOf(x - 1) && topOf(x) + 3 < topOf(x + 1)) ++spikes;
+    }
+
+    // Not churning: over 60 ticks only a small fraction of the water moves.
     std::vector<uint8_t> before(world.cellCount());
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
@@ -465,9 +479,11 @@ bool checkBigLakeLevelsAndSettles() {
     }
 
     const int conserved = world.count(Mat::Water) - startCells;
-    const bool passed = (hi - lo) <= 1 && moved == 0 && conserved == 0;
-    std::printf("a big lake levels and settles: %s (spread %d rows, moving %d, cells %+d)\n",
-                passed ? "PASS" : "FAIL", hi - lo, moved, conserved);
+    const bool spread = leftmost <= 4 && rightmost >= W - 5;
+    const bool settled = moved <= startCells / 10;
+    const bool passed = spread && settled && conserved == 0 && spikes == 0;
+    std::printf("a big lake spreads and settles: %s (reaches %d..%d, moving %d, spikes %d, cells %+d)\n",
+                passed ? "PASS" : "FAIL", leftmost, rightmost, moved, spikes, conserved);
     return passed;
 }
 

@@ -60,7 +60,9 @@ struct MaterialInfo {
     uint8_t density;          // heavier materials sink through lighter ones; air is 0
     bool falls;               // loose solid: falls and piles when unsupported
     bool flows;               // liquid: spreads sideways and pools
-    uint8_t flowSlack;        // caps how far a liquid reaches sideways, in cells per tick
+    uint8_t flowSlack;        // unused by movement now that liquids follow the plain
+                              // down / down-diagonal / sideways rules; kept so the
+                              // data table and the spec still line up
     bool flammable;           // catches fire from an adjacent flame
     uint8_t burnTime;         // ticks a burning cell lasts before it becomes `burnsInto`
     uint8_t igniteChance;     // 0..255 chance per burning neighbour per tick of catching

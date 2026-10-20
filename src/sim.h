@@ -29,6 +29,9 @@ struct SimRect {
 //   * A loose solid tries straight down, then down-left, then down-right.
 //   * A liquid rolls down a slope, then spreads sideways as far as the liquid
 //     stacked on top of it allows, so deep water pushes out to find its level.
+//     A surface cell also steps toward the nearest strictly-lower column in
+//     reach, and every LEVEL_INTERVAL ticks a body of liquid that has gone quiet
+//     is tidied to a genuinely level surface in one step, conserving its volume.
 //   * A material can move into empty space, or swap with a lighter loose solid
 //     or liquid, so sand sinks through water and burning oil keeps burning as
 //     it flows.

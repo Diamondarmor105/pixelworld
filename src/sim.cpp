@@ -311,27 +311,38 @@ int columnTop(const World& world, Mat liquid, int x) {
     return world.height();
 }
 
-// A surface cell - nothing stacked on top, so no pressure. It may step sideways
-// into an empty cell beside it at the same row, but only toward a column whose
-// liquid surface is strictly lower than its own. That is what lets a poured
-// pool spread out to a flat surface rather than settling as a 45-degree wedge
-// (the diagonal roll below only ever moves downhill, so on its own it stops as
-// a staircase). Restricting the hop to a strictly-lower column keeps it biased
-// downhill, so the pool converges and only a few surface cells shuffle about
-// while it finishes levelling. An empty neighbour column counts as lower (it
+// A surface cell - nothing stacked on top, so no pressure. It looks sideways
+// along its own row for a column whose liquid surface is strictly lower than
+// its own, and steps one cell toward the nearest one it finds. That is what
+// lets a poured pool spread out to a flat surface rather than settling as a
+// 45-degree wedge (the diagonal roll below only ever moves downhill, so on its
+// own it stops as a staircase).
+//
+// Two details matter. First, an empty neighbour column counts as lower (it
 // reports "below the world"), so a pool spreads out across dry ground too.
-bool levelHop(World& world, std::vector<uint8_t>& moved, int x, int y, int dir) {
-    const int tx = x + dir;
-    if (!world.inBounds(tx, y)) return false;
-    if (world.at(tx, y) != Mat::Air) return false;
-    if (isMoved(world, moved, tx, y)) return false;
-
+// Second, `reach` lets the cell look several columns ahead, exactly like the
+// pressured path does: with a reach of one the pool can only even out by one
+// column per tick, which takes thousands of ticks to level a tank and then
+// stalls a few rows short. Only stepping toward a STRICTLY lower column keeps
+// it biased downhill, which is what stops two cells trading a spot back and
+// forth forever.
+bool levelHop(World& world, std::vector<uint8_t>& moved, int x, int y, int dir, int reach) {
     const Mat self = world.at(x, y);
     int myTop = y;
     while (myTop - 1 >= 0 && world.at(x, myTop - 1) == self) --myTop;
-    const int theirTop = columnTop(world, self, tx);
-    if (theirTop <= myTop) return false;  // not strictly lower: leave it alone
-    return trySwap(world, moved, x, y, tx, y);
+
+    for (int distance = 1; distance <= reach; ++distance) {
+        const int tx = x + dir * distance;
+        if (!world.inBounds(tx, y)) return false;
+        if (world.at(tx, y) != Mat::Air) return false;  // blocked: cannot pass through other cells
+        if (isMoved(world, moved, tx, y)) return false;
+        const int theirTop = columnTop(world, self, tx);
+        if (theirTop > myTop) {
+            // A lower column is in reach: step one cell toward it.
+            return trySwap(world, moved, x, y, x + dir, y);
+        }
+    }
+    return false;
 }
 
 void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir, int frame) {
@@ -356,9 +367,11 @@ void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
     //   2. Pressured liquid reaches out sideways for the nearest empty cell,
     //      shoving lighter material out of the way - a deep pond levelling out,
     //      or a wave bursting through a pile of sand.
-    //   3. A surface cell steps sideways into a shorter neighbouring column, so
-    //      a poured pool spreads to a flat surface instead of a diagonal wedge.
+    //   3. A surface cell steps sideways toward the nearest strictly-lower
+    //      column within reach, so a poured pool spreads to a flat surface
+    //      instead of a diagonal wedge.
     const int side = (((x * 73856093) ^ (y * 19349663) ^ (frame * 83492791)) & 1) ? 1 : -1;
+    const int reach = std::max(1, static_cast<int>(info.flowSlack));
 
     if (trySwap(world, moved, x, y, x + side, y + 1)) return;
     if (trySwap(world, moved, x, y, x - side, y + 1)) return;
@@ -381,8 +394,130 @@ void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
         if (shoveGrain(world, moved, x, y, -side)) return;
     }
 
-    if (levelHop(world, moved, x, y, side)) return;
-    levelHop(world, moved, x, y, -side);
+    if (levelHop(world, moved, x, y, side, reach)) return;
+    levelHop(world, moved, x, y, -side, reach);
+}
+
+// Every so often, a body of liquid that has gone quiet is tidied up to a
+// genuinely level surface. The local rules above are enough to move water
+// around and look right, but on their own they level a pool only approximately
+// and very slowly: a tall column collapsing into a wide tank takes thousands of
+// ticks to even out and then stalls a few rows short. This pass measures each
+// connected body's columns and volume, works out the one surface row that holds
+// that volume, and rewrites the body to it - exactly conserving the cell count,
+// in a single step. It is a no-op on a body that is already level, so it costs
+// nothing visually and never makes a settled pool shimmer. It runs every
+// LEVEL_INTERVAL ticks rather than every tick so the local rules (splashing,
+// rolling, water bursting through sand) keep doing the visible work.
+constexpr int LEVEL_INTERVAL = 20;
+
+// Level every body of `liquid` that overlaps the region. The flood-fill is
+// clipped to the region, so a body stretching off-screen is only tidied where
+// it is visible and the frozen part is left exactly as it is.
+void levelLiquid(World& world, Mat liquid, const SimRect& region) {
+    const int width = world.width();
+    const int height = world.height();
+    std::vector<uint8_t> seen(world.cellCount(), 0);
+
+    for (int sy = region.y0; sy <= region.y1; ++sy) {
+        for (int sx = region.x0; sx <= region.x1; ++sx) {
+            if (world.at(sx, sy) != liquid) continue;
+            const size_t start = static_cast<size_t>(sy) * width + sx;
+            if (seen[start]) continue;
+
+            // 1. Collect one body, 8-connected, so a diagonal staircase counts
+            // as one body rather than a string of separate single cells.
+            std::vector<int> stack{static_cast<int>(start)};
+            std::vector<int> body;
+            seen[start] = 1;
+            int minX = sx, maxX = sx;
+            while (!stack.empty()) {
+                const int i = stack.back();
+                stack.pop_back();
+                body.push_back(i);
+                const int x = i % width;
+                const int y = i / width;
+                minX = std::min(minX, x);
+                maxX = std::max(maxX, x);
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
+                        const int px = x + dx;
+                        const int py = y + dy;
+                        if (px < 0 || py < 0 || px >= width || py >= height) continue;
+                        if (world.at(px, py) != liquid) continue;
+                        const size_t k = static_cast<size_t>(py) * width + px;
+                        if (seen[k]) continue;
+                        seen[k] = 1;
+                        stack.push_back(static_cast<int>(k));
+                    }
+                }
+            }
+            const int volume = static_cast<int>(body.size());
+            const int cols = maxX - minX + 1;
+
+            // 2. The row each column's liquid sits on: one below the body's
+            // lowest cell in that column.
+            std::vector<int> support(cols, -1);
+            for (int i : body) {
+                const int x = i % width;
+                const int y = i / width;
+                support[x - minX] = std::max(support[x - minX], y + 1);
+            }
+
+            // 3. Find the surface row that holds exactly this volume. Capacity
+            // is how many cells would fit above each column's floor if the
+            // surface were at row s, and it only shrinks as s rises, so the
+            // first s that fits is the level surface.
+            auto capacity = [&](int s) {
+                int cap = 0;
+                for (int c = 0; c < cols; ++c) {
+                    if (support[c] >= 0) cap += std::max(0, support[c] - s);
+                }
+                return cap;
+            };
+            int surface = 0;
+            for (int s = 0; s <= height; ++s) {
+                if (capacity(s) <= volume) {
+                    surface = s;
+                    break;
+                }
+            }
+
+            // 4. Rewrite the body: clear it, then pour it back row by row from
+            // the surface downward so the volume spreads evenly instead of
+            // stacking in one column.
+            for (int i : body) world.set(i % width, i / width, Mat::Air);
+            int remaining = volume;
+            for (int y = surface; y < height && remaining > 0; ++y) {
+                for (int c = 0; c < cols && remaining > 0; ++c) {
+                    const int px = minX + c;
+                    if (support[c] < 0 || y >= support[c]) continue;
+                    if (world.at(px, y) != Mat::Air) continue;
+                    world.set(px, y, liquid);
+                    --remaining;
+                }
+            }
+            // Whatever could not go under the surface (a column walled off
+            // above its floor) stacks up on top instead, so volume is never
+            // lost.
+            for (int y = surface - 1; y >= 0 && remaining > 0; --y) {
+                for (int c = 0; c < cols && remaining > 0; ++c) {
+                    const int px = minX + c;
+                    if (world.at(px, y) != Mat::Air) continue;
+                    world.set(px, y, liquid);
+                    --remaining;
+                }
+            }
+        }
+    }
+}
+
+// Lava is thick and crusts over rather than flowing, so the leveling pass skips
+// it; water, oil and acid are the ones that should find their level.
+bool levelsOut(Mat m) {
+    if (!materialInfo(m).flows) return false;
+    return m != Mat::Lava;
 }
 
 }  // namespace
@@ -407,6 +542,15 @@ void Simulation::step(World& world, const SimRect& region) {
     // movement.
     applyReactions(world, region, frame_);
     updateFire(world, region, frame_);
+
+    // Every so often, tidy any liquid body that has gone quiet to a genuinely
+    // level surface. Runs before movement so the settled result is what the
+    // movement rules then act on.
+    if (frame_ % LEVEL_INTERVAL == 0) {
+        for (int m = 0; m < static_cast<int>(Mat::COUNT); ++m) {
+            if (levelsOut(static_cast<Mat>(m))) levelLiquid(world, static_cast<Mat>(m), region);
+        }
+    }
 
     // Bottom row first, so a falling cell lands before the cell above it moves.
     const int dir = (frame_ % 2 == 0) ? 1 : -1;

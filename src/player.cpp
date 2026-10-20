@@ -22,10 +22,16 @@ constexpr float MAX_FALL = 8.0f;
 // stop you dead.
 constexpr int MAX_STEP_UP = 2;
 
-// How deep a heap of loose grain the player can plough through. Each cell of
-// push displaces one column of grain, so this is roughly "how many columns of
-// sand you can shove aside at once" before it becomes an immovable wall.
-constexpr int MAX_PUSH = 3;
+// How deep a heap of loose grain the player can plough through, before it
+// becomes an immovable wall. This is not a fixed number of columns: it is
+// worked out from the weight (density) of the grain in front of the player, so
+// light snow scatters out of the way while heavy gravel barely budges.
+// `PUSH_FORCE` is the total weight the player can shift; the loop in pushLoose
+// adds up the grain it would have to move and gives up once that is exceeded.
+// Calibrated so a small drift of light snow (a few columns deep) is ploughed
+// through, while the same heap of heavy gravel stops you almost at once. Air
+// weighs nothing and nothing solid is ever loose, so neither is ever pushed.
+constexpr int PUSH_FORCE = 1200;
 
 // What the player cannot walk through. Air and fire are passable, and so are
 // leaves - you push through foliage rather than being stopped by it. Liquids
@@ -146,25 +152,34 @@ bool Player::pushLoose(World& world, float direction) const {
                                 : static_cast<int>(std::floor(x_)) - 1;
     const int top = static_cast<int>(std::floor(y_));
 
-    // Every cell in the player's front column must be loose (or air), and the
-    // column has to end at open space within MAX_PUSH cells, otherwise this is
-    // a wall, not a heap.
+    // Every cell in the player's front column must be loose (or air), otherwise
+    // this is a wall and not a heap.
     for (int cy = top; cy < top + HEIGHT; ++cy) {
         const Mat m = world.at(front, cy);
         if (m == Mat::Air) continue;
         if (!isLoose(m)) return false;
     }
 
+    // Walk forward until open space. The further we have to go, the more grain
+    // has to move, so add up its weight; once that exceeds what the player can
+    // shift, the heap is too heavy to push. Light snow scatters several columns
+    // ahead; heavy gravel only budges one or two.
     int reach = 1;
+    int weight = 0;
     for (;; ++reach) {
         const int px = front + dir * reach;
         if (!world.inBounds(px, top)) return false;
+
         bool empty = true;
         for (int cy = top; cy < top + HEIGHT; ++cy) {
-            if (world.at(px, cy) != Mat::Air) { empty = false; break; }
+            const Mat m = world.at(px, cy);
+            if (m == Mat::Air) continue;
+            empty = false;
+            if (!isLoose(m)) return false;             // a solid joins the pile: unshovable
+            weight += materialInfo(m).density;
         }
         if (empty) break;
-        if (reach > MAX_PUSH) return false;
+        if (weight > PUSH_FORCE) return false;         // too heavy to move this far
     }
 
     // Shift each column forward, from the far end back toward the player, so no

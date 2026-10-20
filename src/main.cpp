@@ -552,38 +552,61 @@ bool checkPlayerBlockedByStone() {
     return passed;
 }
 
-// Self-test: walking into a single column of loose sand shoves it forward
-// rather than being stopped by it - the player ploughs through a small heap.
+// Self-test: walking into a small, light heap of loose grain shoves it forward
+// rather than being stopped by it - the player ploughs through.
 bool checkPlayerPushesSand() {
     World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
     buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
 
     const int heapX = 140;
-    for (int y = PLAYER_TEST_FLOOR - 8; y < PLAYER_TEST_FLOOR; ++y) {
-        for (int x = heapX; x < heapX + 2; ++x) world.set(x, y, Mat::Sand);
+    // A small drift: 2 columns wide, 4 cells tall. Light enough to shift.
+    for (int y = PLAYER_TEST_FLOOR - 4; y < PLAYER_TEST_FLOOR; ++y) {
+        for (int x = heapX; x < heapX + 2; ++x) world.set(x, y, Mat::Snow);
     }
 
     Player player(100.0f, 40.0f);
     for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
 
-    int sandRightBefore = -1;
+    int rightBefore = -1;
     for (int x = 0; x < world.width(); ++x)
         for (int y = 0; y < PLAYER_TEST_FLOOR; ++y)
-            if (world.at(x, y) == Mat::Sand) sandRightBefore = std::max(sandRightBefore, x);
+            if (world.at(x, y) == Mat::Snow) rightBefore = std::max(rightBefore, x);
 
     for (int i = 0; i < 600; ++i) player.tick(world, 1.0f, false);
 
-    int sandRightAfter = -1;
+    int rightAfter = -1;
     for (int x = 0; x < world.width(); ++x)
         for (int y = 0; y < PLAYER_TEST_FLOOR; ++y)
-            if (world.at(x, y) == Mat::Sand) sandRightAfter = std::max(sandRightAfter, x);
+            if (world.at(x, y) == Mat::Snow) rightAfter = std::max(rightAfter, x);
 
-    // The heap moved right, and the player got past the far side of it.
-    const bool passed = sandRightAfter > sandRightBefore &&
-                        static_cast<int>(player.x()) > heapX + 2;
-    std::printf("player pushes sand: %s (sand right %d -> %d, player at %d)\n",
-                passed ? "PASS" : "FAIL", sandRightBefore, sandRightAfter,
-                static_cast<int>(player.x()));
+    const bool passed = rightAfter > rightBefore && static_cast<int>(player.x()) > heapX + 2;
+    std::printf("player pushes a light heap: %s (heap right %d -> %d, player at %d)\n",
+                passed ? "PASS" : "FAIL", rightBefore, rightAfter, static_cast<int>(player.x()));
+    return passed;
+}
+
+// Self-test: the push distance depends on the weight of the grain. A heap of
+// heavy gravel that is the same size as the snow one above stops the player,
+// because the total weight is beyond what they can shift.
+bool checkHeavyHeapStopsPlayer() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
+
+    const int heapX = 140;
+    // Same 2x4 footprint as the snow heap, but gravel (density 170 vs snow's 90).
+    // 4 deep is beyond the player: gravel's weight adds up too fast.
+    for (int y = PLAYER_TEST_FLOOR - 4; y < PLAYER_TEST_FLOOR; ++y) {
+        for (int x = heapX; x < heapX + 4; ++x) world.set(x, y, Mat::Gravel);
+    }
+
+    Player player(100.0f, 40.0f);
+    for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
+    for (int i = 0; i < 600; ++i) player.tick(world, 1.0f, false);
+
+    // Stopped short of the heap's far side.
+    const bool passed = static_cast<int>(player.x()) < heapX + 4;
+    std::printf("a heavy heap stops the player: %s (player at %d, heap at %d..%d)\n",
+                passed ? "PASS" : "FAIL", static_cast<int>(player.x()), heapX, heapX + 3);
     return passed;
 }
 
@@ -626,6 +649,7 @@ int runSelfTest() {
     if (!checkPlayerJumpsAndLands()) passed = false;
     if (!checkPlayerBlockedByStone()) passed = false;
     if (!checkPlayerPushesSand()) passed = false;
+    if (!checkHeavyHeapStopsPlayer()) passed = false;
 
     return passed ? 0 : 1;
 }

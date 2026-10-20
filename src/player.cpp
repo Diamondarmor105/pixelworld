@@ -22,20 +22,30 @@ constexpr float MAX_FALL = 8.0f;
 // stop you dead.
 constexpr int MAX_STEP_UP = 2;
 
+// How deep a heap of loose grain the player can plough through. Each cell of
+// push displaces one column of grain, so this is roughly "how many columns of
+// sand you can shove aside at once" before it becomes an immovable wall.
+constexpr int MAX_PUSH = 3;
+
 // What the player cannot walk through. Air and fire are passable, and so are
 // leaves - you push through foliage rather than being stopped by it. Liquids
 // are something you wade through and sink into rather than stand on. Everything
-// else stops you.
+// else stops you - unless it is loose enough to shove (see pushLoose).
 bool blocksPlayer(Mat m) {
     if (m == Mat::Air || m == Mat::Fire || m == Mat::Foliage) return false;
     return !materialInfo(m).flows;
+}
+
+// Loose grains the player can push, as opposed to a solid wall of stone.
+bool isLoose(Mat m) {
+    return materialInfo(m).falls && !materialInfo(m).flows;
 }
 
 }  // namespace
 
 Player::Player(float x, float y) : x_(x), y_(y) {}
 
-void Player::tick(const World& world, float moveInput, bool jumpInput) {
+void Player::tick(World& world, float moveInput, bool jumpInput) {
     vx_ = moveInput * WALK_SPEED;
     if (jumpInput && onGround_) vy_ = -JUMP_SPEED;
 
@@ -79,7 +89,7 @@ void Player::tick(const World& world, float moveInput, bool jumpInput) {
     }
 }
 
-void Player::moveAxis(const World& world, float amount, bool horizontal, bool free) {
+void Player::moveAxis(World& world, float amount, bool horizontal, bool free) {
     if (free) {
         if (horizontal) x_ += amount;
         else y_ += amount;
@@ -99,9 +109,16 @@ void Player::moveAxis(const World& world, float amount, bool horizontal, bool fr
         if (!collides(world)) continue;
 
         if (horizontal) {
-            // Put them back, then see whether the thing in the way is small
-            // enough to step onto instead of stopping for.
+            // Put them back, then try to shovel the loose grain ahead of them
+            // out of the way before giving up.
             x_ -= step;
+            if (pushLoose(world, step)) {
+                x_ += step;
+                if (!collides(world)) continue;
+                x_ -= step;
+            }
+            // Still stuck: maybe the thing in the way is small enough to step
+            // onto instead of stopping for.
             const float groundY = y_;
             for (int rise = 1; rise <= MAX_STEP_UP; ++rise) {
                 y_ = groundY - static_cast<float>(rise);
@@ -121,6 +138,46 @@ void Player::moveAxis(const World& world, float amount, bool horizontal, bool fr
         vy_ = 0.0f;
         return;
     }
+}
+
+bool Player::pushLoose(World& world, float direction) const {
+    const int dir = (direction > 0.0f) ? 1 : -1;
+    const int front = (dir > 0) ? static_cast<int>(std::floor(x_)) + WIDTH
+                                : static_cast<int>(std::floor(x_)) - 1;
+    const int top = static_cast<int>(std::floor(y_));
+
+    // Every cell in the player's front column must be loose (or air), and the
+    // column has to end at open space within MAX_PUSH cells, otherwise this is
+    // a wall, not a heap.
+    for (int cy = top; cy < top + HEIGHT; ++cy) {
+        const Mat m = world.at(front, cy);
+        if (m == Mat::Air) continue;
+        if (!isLoose(m)) return false;
+    }
+
+    int reach = 1;
+    for (;; ++reach) {
+        const int px = front + dir * reach;
+        if (!world.inBounds(px, top)) return false;
+        bool empty = true;
+        for (int cy = top; cy < top + HEIGHT; ++cy) {
+            if (world.at(px, cy) != Mat::Air) { empty = false; break; }
+        }
+        if (empty) break;
+        if (reach > MAX_PUSH) return false;
+    }
+
+    // Shift each column forward, from the far end back toward the player, so no
+    // grain is overwritten on the way.
+    for (int r = reach; r >= 1; --r) {
+        const int from = front + dir * (r - 1);
+        const int to = front + dir * r;
+        for (int cy = top; cy < top + HEIGHT; ++cy) {
+            world.set(to, cy, world.at(from, cy));
+            world.set(from, cy, Mat::Air);
+        }
+    }
+    return true;
 }
 
 bool Player::collides(const World& world) const {

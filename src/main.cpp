@@ -552,6 +552,41 @@ bool checkPlayerBlockedByStone() {
     return passed;
 }
 
+// Self-test: walking into a single column of loose sand shoves it forward
+// rather than being stopped by it - the player ploughs through a small heap.
+bool checkPlayerPushesSand() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
+
+    const int heapX = 140;
+    for (int y = PLAYER_TEST_FLOOR - 8; y < PLAYER_TEST_FLOOR; ++y) {
+        for (int x = heapX; x < heapX + 2; ++x) world.set(x, y, Mat::Sand);
+    }
+
+    Player player(100.0f, 40.0f);
+    for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
+
+    int sandRightBefore = -1;
+    for (int x = 0; x < world.width(); ++x)
+        for (int y = 0; y < PLAYER_TEST_FLOOR; ++y)
+            if (world.at(x, y) == Mat::Sand) sandRightBefore = std::max(sandRightBefore, x);
+
+    for (int i = 0; i < 600; ++i) player.tick(world, 1.0f, false);
+
+    int sandRightAfter = -1;
+    for (int x = 0; x < world.width(); ++x)
+        for (int y = 0; y < PLAYER_TEST_FLOOR; ++y)
+            if (world.at(x, y) == Mat::Sand) sandRightAfter = std::max(sandRightAfter, x);
+
+    // The heap moved right, and the player got past the far side of it.
+    const bool passed = sandRightAfter > sandRightBefore &&
+                        static_cast<int>(player.x()) > heapX + 2;
+    std::printf("player pushes sand: %s (sand right %d -> %d, player at %d)\n",
+                passed ? "PASS" : "FAIL", sandRightBefore, sandRightAfter,
+                static_cast<int>(player.x()));
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -590,6 +625,7 @@ int runSelfTest() {
     if (!checkPlayerRestsOnGround()) passed = false;
     if (!checkPlayerJumpsAndLands()) passed = false;
     if (!checkPlayerBlockedByStone()) passed = false;
+    if (!checkPlayerPushesSand()) passed = false;
 
     return passed ? 0 : 1;
 }

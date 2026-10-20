@@ -5,12 +5,14 @@ World::World(int width, int height)
       height_(height),
       cells_(static_cast<size_t>(width) * height, 0),
       life_(static_cast<size_t>(width) * height, 0),
-      mass_(static_cast<size_t>(width) * height, 0.0f) {}
+      mass_(static_cast<size_t>(width) * height, 0.0f),
+      massPrev_(static_cast<size_t>(width) * height, 0.0f) {}
 
 void World::fill(Mat m) {
     cells_.assign(cells_.size(), static_cast<uint8_t>(m));
     life_.assign(life_.size(), 0);
     mass_.assign(mass_.size(), isMobile(m) ? 1.0f : 0.0f);
+    massPrev_.assign(massPrev_.size(), isMobile(m) ? 1.0f : 0.0f);
 }
 
 int World::count(Mat m) const {

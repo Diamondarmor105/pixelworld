@@ -296,7 +296,7 @@ void flowMass(World& world, int x, int y, float& budget) {
     if (!info.flows && !info.falls) return;
     if (budget <= 0.0f) return;
 
-    const float myMass = world.mass(x, y);
+    const float myMass = world.massAt(x, y);
     if (myMass <= 0.0f) return;
 
     // A viscous material spreads more slowly. `viscosity` runs 0 (water) to 255
@@ -313,20 +313,32 @@ void flowMass(World& world, int x, int y, float& budget) {
     // 1. Gravity: pour down into a cell with room. This applies to any positive
     //    mass, including a sliver: a cell holding 0.03 of a unit must still
     //    fall, or slivers shed by a surface stay stranded in mid-air forever.
+    //
+    //    The seed rule applies here too. A cell below that is currently empty
+    //    must receive at least a whole seed of material, or it would become a
+    //    material cell holding a sliver, fall and empty again next tick, and
+    //    blink. If the pour cannot deliver a seed, the material waits.
     const Mat below = world.at(x, y + 1);
     const bool belowFlows = materialInfo(below).flows;
     const bool belowFalls = materialInfo(below).falls && (below == self);
     const bool belowTakes = below == Mat::Air || belowFlows || belowFalls;
     if (belowTakes) {
-        const float belowMass = (belowFlows || belowFalls) ? world.mass(x, y + 1) : 0.0f;
+        const float belowMass = (belowFlows || belowFalls) ? world.massAt(x, y + 1) : 0.0f;
         const float room = 1.0f - belowMass;
         if (room > 0.0f) {
             float flow = std::min(myMass, room);
             if (myMass - flow < kMassEmpty) flow = myMass;
-            if (flow > kFlowMin) {
+            const float landed = belowMass + flow;
+            if (flow > kFlowMin && landed >= kMassEmpty) {
                 const Mat into = (belowFlows || belowFalls) ? below : self;
-                world.setMass(x, y, self, myMass - flow);
-                world.setMass(x, y + 1, into, belowMass + flow);
+                // Same add-based accounting as the spread below: the recipient is
+                // added to at its live value, and this cell keeps its live mass
+                // minus what it poured. Both are needed because a neighbour
+                // processed earlier in this pass may already have written either
+                // cell, and an overwrite from the snapshot would destroy it.
+                const float belowNow = (belowFlows || belowFalls) ? world.mass(x, y + 1) : 0.0f;
+                world.setMass(x, y, self, world.mass(x, y) - flow);
+                world.setMass(x, y + 1, into, belowNow + flow);
                 budget -= flow;
                 return;
             }
@@ -390,7 +402,7 @@ void flowMass(World& world, int x, int y, float& budget) {
             if (dy[i] != 0 && drop < 1) continue;
         }
 
-        const float other = (there == Mat::Air) ? 0.0f : world.mass(nx, ny);
+        const float other = (there == Mat::Air) ? 0.0f : world.massAt(nx, ny);
         float otherHead = head;
         if (dy[i] != 0) otherHead -= 1.0f;
         const float diff = (myMass + head) - (other + (otherHead > 0.0f ? otherHead : 0.0f));
@@ -398,6 +410,11 @@ void flowMass(World& world, int x, int y, float& budget) {
         // flow floor; a difference that exists because of the pressure head must
         // clear a bigger bar, or a settled pool spends forever shaving slivers.
         const float bar = (diff - (myMass - other)) > kPressureMin ? kPressureMin : kFlowMin;
+        // Oscillation clamp: a difference of a hair is two cells trading the same
+        // crumb back and forth. Require a slightly larger difference than one
+        // flow unit before either side bothers, so a settled surface stops
+        // moving entirely rather than chattering at the last bit of resolution.
+        if (diff <= kFlowMin * 2.0f) continue;
         if (diff > bar) offers[i] = diff * kSideShare * spreadScale;
     }
 
@@ -410,6 +427,30 @@ void flowMass(World& world, int x, int y, float& budget) {
     if (scale <= 0.0f) return;
 
     // The source's share of what it just handed out.
+    //
+    // Every number below comes from the SNAPSHOT: `myMass` is what this cell held
+    // before the pass started, and each `other` is what the recipient held then.
+    // The recipient's cell is then ADDED to (`current + give`), not overwritten,
+    // because an earlier cell in this same pass may already have handed it
+    // something. Adding is what keeps the pass conservative: this cell gives
+    // exactly `given` away, and each recipient gains exactly what it was handed.
+    //
+    // `self` is written from the snapshot (`myMass - given`) for the same reason
+    // in reverse: reading the live value would also subtract gifts that arrived
+    // from neighbours already processed this tick, and destroy them.
+    //
+    // A recipient that is currently EMPTY must end up holding at least a seed, or
+    // the write is skipped and the material stays here. That is the seed rule from
+    // world.h doing its work at the only place it can be enforced. Without it a
+    // cell at the edge of a pool receives a sliver, becomes a material cell for
+    // one tick, pours the sliver straight back down and vanishes again.
+    // What this cell gives away, and what it is left holding.
+    //
+    // `given` is subtracted from the cell's LIVE mass, not from `myMass`. The
+    // snapshot was only used to DECIDE how much to offer; the moment anything is
+    // written the live value is the truth, and it may already include a gift from
+    // a neighbour processed earlier in this pass. Subtracting from the snapshot
+    // would throw that gift away.
     float given = 0.0f;
     for (int i = 0; i < 4; ++i) {
         const float give = offers[i] * scale;
@@ -418,16 +459,21 @@ void flowMass(World& world, int x, int y, float& budget) {
         const int ny = y + dy[i];
         const Mat there = world.at(nx, ny);
         const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
-        const float other = mobileThere ? world.mass(nx, ny) : 0.0f;
-        world.setMass(nx, ny, mobileThere ? there : self, other + give);
+        const float other = mobileThere ? world.massAt(nx, ny) : 0.0f;
+        if (other + give < kMassEmpty) continue;   // would blink: keep it here
+        // Add to whatever the cell already holds now, which may already include a
+        // gift from a neighbour processed earlier in this pass.
+        const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
+        world.setMass(nx, ny, mobileThere ? there : self, current + give);
         budget -= give;
         given += give;
     }
 
-    // Same rule as the fall: never leave a crumb under the empty threshold
-    // behind, because `setMass` would read it as empty and destroy it. Hand the
-    // crumb to a neighbour that can hold material.
     float remain = world.mass(x, y) - given;
+
+    // Same rule as the fall: never leave a crumb under the empty threshold behind,
+    // because `setMass` would read it as empty and destroy it. Hand the crumb to a
+    // neighbour that can hold material.
     if (remain < kMassEmpty && remain > 0.0f) {
         for (int i = 0; i < 4; ++i) {
             const int nx = x + dx[i];
@@ -436,8 +482,8 @@ void flowMass(World& world, int x, int y, float& budget) {
             const Mat there = world.at(nx, ny);
             const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
             if (there != Mat::Air && !mobileThere) continue;
-            const float other = mobileThere ? world.mass(nx, ny) : 0.0f;
-            world.setMass(nx, ny, mobileThere ? there : self, other + remain);
+            const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
+            world.setMass(nx, ny, mobileThere ? there : self, current + remain);
             remain = 0.0f;
             break;
         }
@@ -445,7 +491,7 @@ void flowMass(World& world, int x, int y, float& budget) {
         // `setMass` read it as empty. Mass is never destroyed; a cell that holds
         // a sliver simply stays a material cell until it can hand it on.
         if (remain > 0.0f) {
-            world.setMass(x, y, self, remain);
+            world.setMass(x, y, self, world.mass(x, y));
             return;
         }
     }
@@ -474,7 +520,9 @@ void Simulation::step(World& world, const SimRect& region) {
 
     // One movement pass, bottom-up, over every mobile cell - see the note above
     // `flowMass` for why a single mass-transfer pass replaced the two whole-cell
-    // sweeps.
+    // sweeps, and World::beginMassSnapshot for why the pass reads a start-of-tick
+    // copy of the mass grid rather than the grid it is writing.
+    world.beginMassSnapshot();
     float budget = static_cast<float>(width) * height * 0.5f;
     for (int y = height - 1; y >= 0; --y) {
         for (int x = 0; x < width; ++x) {

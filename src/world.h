@@ -4,9 +4,20 @@
 
 #include "materials.h"
 
-// Liquids are a continuous quantity, not a whole cell. A cell holding less than
-// this much liquid counts as empty; the rest of the program only ever needs
-// "is there liquid here", so one threshold keeps everything else unchanged.
+// Mobile materials are a continuous quantity, not a whole cell. A cell holding
+// less than this much counts as empty; the rest of the program only ever needs
+// "is there material here", so one threshold keeps everything else unchanged.
+//
+// This threshold is also the SEED size: a cell is never filled with an amount
+// smaller than this. A transfer that would leave a recipient holding between 0
+// and `kMassEmpty` is refused instead, and the material stays where it was.
+//
+// That refusal is what removes the last flicker. Without it, a cell at the edge
+// of a pool would receive a sliver, become a material cell for exactly one tick,
+// pour the sliver back down, and become air again — an on/off blink measured at
+// 25 toggles in 60 ticks on one cell. Refusing the sliver means the recipient
+// either gets enough material to be a real cell or gets nothing at all, so the
+// visible surface can only change when a whole seed of material moves.
 constexpr float kMassEmpty = 0.02f;
 
 // The grid of material cells that makes up the world.
@@ -51,6 +62,32 @@ public:
     float mass(int x, int y) const {
         if (!inBounds(x, y)) return 0.0f;
         return mass_[static_cast<size_t>(y) * width_ + x];
+    }
+
+    // -- Double buffering for the movement pass ------------------------------
+    //
+    // Movement is a scatter: a cell writes mass into its neighbours. If those
+    // neighbours are still to be visited in the same pass, they read mass that
+    // this very tick created, and push it on again. That is a cascade, and it is
+    // what made the surface of a pool flicker: measured on one edge cell, mass
+    // arrived from the right and was poured straight down inside a single tick,
+    // 25 times in 60 ticks, and the cell blinked between water and air.
+    //
+    // So the pass reads from a SNAPSHOT taken before it starts and writes to the
+    // live grid. A cell then always computes its outflow from the world as it was
+    // at the beginning of the tick, never from a neighbour this tick has already
+    // changed. Nothing can travel more than one cell per tick, and the order the
+    // cells are visited in stops mattering at all.
+    //
+    // Only `mass_` is buffered. `flowMass` never touches the material or life
+    // arrays, so the snapshot copy is a single flat float copy per tick.
+    void beginMassSnapshot() { massPrev_ = mass_; }
+
+    // Mass as it stood at the start of the movement pass. This is the only read a
+    // flow rule may use. `mass()` would see writes made earlier in the same pass.
+    float massAt(int x, int y) const {
+        if (!inBounds(x, y)) return 0.0f;
+        return massPrev_[static_cast<size_t>(y) * width_ + x];
     }
 
     // Sets the liquid in a cell directly, from the flow rules. `material` is the
@@ -113,4 +150,5 @@ private:
     std::vector<uint8_t> cells_;
     std::vector<uint8_t> life_;
     std::vector<float> mass_;
+    std::vector<float> massPrev_;   // start-of-pass copy, see beginMassSnapshot
 };

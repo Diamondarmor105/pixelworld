@@ -288,6 +288,34 @@ int surfaceRow(const World& world, int x, int from) {
 //     It gates the sideways and diagonal steps only; straight-down falling is
 //     always allowed, so a solid still drops freely through open air.
 //
+// Gives the small amount a cell is holding to a neighbour that can accept it,
+// so a trace of material is never left stranded. Returns true if the cell was
+// emptied. Used for the last sliver of a flow, both when a cell has just spread
+// nearly all of itself away and when it has been too small to spread at all.
+//
+// Diagonals below are tried first, then the sides: a crumb prefers to tumble
+// downhill, and only then to slide sideways. A cell that can take it is any
+// mobile material (masses add) or air (it becomes material).
+bool handOffCrumb(World& world, int x, int y, Mat self) {
+    const float amount = world.massAt(x, y);
+    if (amount <= 0.0f) return false;
+    static const int dx[4] = {-1, +1, -1, +1};
+    static const int dy[4] = {+1, +1, 0, 0};
+    for (int i = 0; i < 4; ++i) {
+        const int nx = x + dx[i];
+        const int ny = y + dy[i];
+        if (!world.inBounds(nx, ny)) continue;
+        const Mat there = world.at(nx, ny);
+        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
+        if (there != Mat::Air && !mobileThere) continue;
+        const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
+        world.setMass(nx, ny, mobileThere ? there : self, current + amount);
+        world.setMass(x, y, self, 0.0f);
+        return true;
+    }
+    return false;
+}
+
 // The `budget` is the total mass this tick is allowed to move, so a big scene
 // cannot spend unbounded time settling; it is passed in and spent down.
 void flowMass(World& world, int x, int y, float& budget) {
@@ -311,13 +339,12 @@ void flowMass(World& world, int x, int y, float& budget) {
     const float spreadScale = 1.0f - (info.viscosity / 255.0f) * 0.9f;
 
     // 1. Gravity: pour down into a cell with room. This applies to any positive
-    //    mass, including a sliver: a cell holding 0.03 of a unit must still
-    //    fall, or slivers shed by a surface stay stranded in mid-air forever.
-    //
-    //    The seed rule applies here too. A cell below that is currently empty
-    //    must receive at least a whole seed of material, or it would become a
-    //    material cell holding a sliver, fall and empty again next tick, and
-    //    blink. If the pour cannot deliver a seed, the material waits.
+    //    mass, including a sliver, and it is NEVER gated by the seed rule. A cell
+    //    holding 0.03 of a unit must still fall, or slivers shed by a surface stay
+    //    stranded in mid-air forever - and a stranded speck is far more visible
+    //    than the flicker the seed rule exists to prevent. Falling is also not
+    //    where the flicker came from: the blink was lateral supply into a cell
+    //    that then drained straight back down.
     const Mat below = world.at(x, y + 1);
     const bool belowFlows = materialInfo(below).flows;
     const bool belowFalls = materialInfo(below).falls && (below == self);
@@ -328,8 +355,7 @@ void flowMass(World& world, int x, int y, float& budget) {
         if (room > 0.0f) {
             float flow = std::min(myMass, room);
             if (myMass - flow < kMassEmpty) flow = myMass;
-            const float landed = belowMass + flow;
-            if (flow > kFlowMin && landed >= kMassEmpty) {
+            if (flow > kFlowMin) {
                 const Mat into = (belowFlows || belowFalls) ? below : self;
                 // Same add-based accounting as the spread below: the recipient is
                 // added to at its live value, and this cell keeps its live mass
@@ -347,7 +373,15 @@ void flowMass(World& world, int x, int y, float& budget) {
 
     // The sideways step needs a real amount of material: a sliver has no surplus
     // to give, and shuffling slivers is the surface jitter this model removes.
-    if (myMass <= kMassEmpty) return;
+    //
+    // But a sliver must not be stranded. If this cell cannot reach the spread
+    // code below, it still tries to hand its crumb to a neighbour that can take
+    // it, so the last trace of a flow always finds its way onward instead of
+    // sitting in mid-air for the rest of the run.
+    if (myMass <= kMassEmpty) {
+        handOffCrumb(world, x, y, self);
+        return;
+    }
 
     // 2. Spread: hand mass to each neighbour that is lower, so a surface slopes
     //    down until it is flat. Only outflow is computed here; each neighbour
@@ -491,7 +525,7 @@ void flowMass(World& world, int x, int y, float& budget) {
         // `setMass` read it as empty. Mass is never destroyed; a cell that holds
         // a sliver simply stays a material cell until it can hand it on.
         if (remain > 0.0f) {
-            world.setMass(x, y, self, world.mass(x, y));
+            world.setMass(x, y, self, world.mass(x, y) + remain);
             return;
         }
     }

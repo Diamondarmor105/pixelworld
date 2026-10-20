@@ -16,8 +16,7 @@ struct SimRect {
 };
 
 // The per-pixel physics. One call to step() advances the world by one tick:
-// reactions, then fire, then every loose solid and liquid in the region gets
-// one chance to fall or flow.
+// reactions, then fire, then one movement pass over every mobile cell.
 //
 // Rules (see devpost/spec.md > Components > Simulation):
 //   * Materials react to whatever touches them, with no temperature tracked at
@@ -26,26 +25,29 @@ struct SimRect {
 //     to mud and washes ash away, and lava on sulfur crust blows a crater.
 //   * Fire spreads to neighbouring flammable cells (see their `igniteChance`),
 //     burns for as long as their `burnTime`, then leaves `burnsInto` behind.
-//   * A loose solid tries straight down, then down-left, then down-right.
-//   * A liquid is a continuous quantity, not a whole cell: every liquid cell
-//     holds a mass between 0 and 1 (a little above 1 when compressed). It moves
-//     by TRANSFERRING a fraction of a unit, never by swapping places. It pours
-//     down into a cell with room, and it equalises sideways by giving half the
-//     difference to a less filled neighbour.
+//   * Every MOBILE material - liquids and loose solids alike - is a continuous
+//     quantity, not a whole cell. A cell holds a mass between 0 and 1 (a little
+//     above 1 when compressed) and moves by TRANSFERRING a fraction of a unit,
+//     never by swapping places. It pours down into a cell with room, and spreads
+//     toward neighbours that are lower.
 //
-//     This is what makes a pool level and stay level. Whole-cell liquids could
+//     This is what makes a pool level and stay level. Whole-cell materials could
 //     not express a flat surface: two equally full neighbours can only trade
 //     places, which they do forever, so the surface jitters and a slope freezes.
 //     With mass, equal neighbours have a difference of zero and therefore do
-//     nothing at all, and any inequality flows itself flat. There is no pressure
-//     scan, no depth measurement, no minimum drop and no periodic tidying pass.
-//   * A material can move into empty space, or swap with a lighter loose solid,
-//     so sand sinks through water and burning oil keeps burning as it flows.
-//   * Anything that moved is marked for the rest of the tick, so nothing moves
-//     twice in one frame. Liquids do not use that mark: a mass transfer is not a
-//     move, and a cell may legitimately both receive and give in one tick.
-//   * Solids run first, bottom-up, then liquids, bottom-up. Liquids need only
-//     one pass because a transfer is symmetric and converges.
+//     nothing at all, and any inequality flows itself flat.
+//   * Two material properties shape the movement, both plain numbers in the
+//     table in materials.cpp:
+//       - `viscosity` (liquids): how freely the material spreads. 0 is water,
+//         255 is cold mud. It scales the sideways share, so thick liquids ooze
+//         to a level slowly and thin ones snap flat.
+//       - `friction` (loose solids): the angle of repose. A solid only spreads
+//         sideways when the neighbour surface is steeper than this, which is
+//         what keeps sand a dune and gravel a slope while water levels. A solid
+//         still falls straight down freely whatever its friction.
+//   * One pass per tick, bottom-up, over every mobile cell. No second sweep and
+//     no moved-mark: a transfer leaves no hole to refill and is computed once,
+//     from a frozen read, so it cannot be double-counted.
 class Simulation {
 public:
     explicit Simulation(const World& world);
@@ -60,6 +62,5 @@ public:
     int frame() const { return frame_; }
 
 private:
-    std::vector<uint8_t> moved_;
     int frame_ = 0;
 };

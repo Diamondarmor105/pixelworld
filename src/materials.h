@@ -60,9 +60,16 @@ struct MaterialInfo {
     uint8_t density;          // heavier materials sink through lighter ones; air is 0
     bool falls;               // loose solid: falls and piles when unsupported
     bool flows;               // liquid: spreads sideways and pools
-    uint8_t flowSlack;        // unused by movement now that liquids follow the plain
-                              // down / down-diagonal / sideways rules; kept so the
-                              // data table and the spec still line up
+    uint8_t viscosity;        // liquids: 0 = free-flowing like water, 255 = almost
+                              // static like cold mud. How much of the mass
+                              // difference a cell moves per pass, how strongly it
+                              // answers pressure, and how quickly it pours. Only
+                              // read for materials with `flows`.
+    uint8_t friction;         // loose solids: the steepest surface slope the pile
+                              // will hold before grains start rolling sideways, as
+                              // an unsigned slope. 0 = no friction at all (levels
+                              // like water), 255 = will hold a vertical cliff. Only
+                              // read for materials with `falls`.
     bool flammable;           // catches fire from an adjacent flame
     uint8_t burnTime;         // ticks a burning cell lasts before it becomes `burnsInto`
     uint8_t igniteChance;     // 0..255 chance per burning neighbour per tick of catching

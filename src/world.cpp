@@ -10,7 +10,7 @@ World::World(int width, int height)
 void World::fill(Mat m) {
     cells_.assign(cells_.size(), static_cast<uint8_t>(m));
     life_.assign(life_.size(), 0);
-    mass_.assign(mass_.size(), materialInfo(m).flows ? 1.0f : 0.0f);
+    mass_.assign(mass_.size(), isMobile(m) ? 1.0f : 0.0f);
 }
 
 int World::count(Mat m) const {

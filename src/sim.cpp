@@ -28,61 +28,8 @@ constexpr float kPressureMin = 1.0f / 16.0f;
 // from ever going fully quiet).
 constexpr float kSideShare = 0.45f;
 
-// Can material `from` move into a cell holding `into`?
-// Empty space always yes; a lighter liquid is pushed aside, and a liquid also
-// pushes through a lighter grain (so melt-water can percolate through snow);
-// but loose solids give way only to liquids. Grains stack in landing order -
-// falling sand settles on top of dirt instead of flipping the dirt up through
-// the pile - and anything solid blocks.
-bool canDisplace(Mat from, Mat into) {
-    if (into == Mat::Air) return true;
-    const MaterialInfo& target = materialInfo(into);
-    if (!target.falls && !target.flows) return false;
-    if (materialInfo(from).density <= target.density) return false;
-    return target.flows || materialInfo(from).flows;
-}
-
-bool isOpen(const World& world, int x, int y) {
-    return world.at(x, y) == Mat::Air;
-}
-
 bool inRect(const SimRect& r, int x, int y) {
     return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
-}
-
-bool isMoved(const World& world, const std::vector<uint8_t>& moved, int x, int y) {
-    return moved[static_cast<size_t>(y) * world.width() + x] != 0;
-}
-
-void markMoved(const World& world, std::vector<uint8_t>& moved, int x, int y) {
-    moved[static_cast<size_t>(y) * world.width() + x] = 1;
-}
-
-// Swaps two cells if it is legal and neither has moved this tick.
-bool trySwap(World& world, std::vector<uint8_t>& moved, int x, int y, int tx, int ty) {
-    if (!world.inBounds(tx, ty)) return false;
-    if (isMoved(world, moved, tx, ty)) return false;
-
-    const Mat from = world.at(x, y);
-    const Mat into = world.at(tx, ty);
-    if (!canDisplace(from, into)) return false;
-
-    // `life` travels with the material: burning oil keeps burning as it flows.
-    const uint8_t lifeFrom = world.life(x, y);
-    const uint8_t lifeInto = world.life(tx, ty);
-
-    world.set(x, y, into);
-    world.set(tx, ty, from);
-    world.setLife(x, y, lifeInto);
-    world.setLife(tx, ty, lifeFrom);
-
-    // Only the destination is flagged. The cell that moved cannot move again,
-    // but the gap it left is free to be filled straight away - by the cell
-    // above falling into it, in this same tick. Flagging the gap too is what
-    // once let holes survive a whole tick, shuttle around inside a pool of
-    // water and make it shimmer instead of settling.
-    markMoved(world, moved, tx, ty);
-    return true;
 }
 
 // A repeatable pseudo-random value for one cell on one tick. The self-test
@@ -295,34 +242,17 @@ void applyReactions(World& world, const SimRect& region, int frame) {
     }
 }
 
-// Move one loose-solid cell according to its rules: down, then down-diagonal.
-//
-// Liquids no longer come through here. They are a continuous quantity and move
-// by mass transfer in `flowLiquid`, so a whole-cell swap is never right for
-// them. `dir` picks which diagonal is tried first. Returns true if the cell
-// moved.
-bool updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir) {
-    const Mat self = world.at(x, y);
-    const MaterialInfo& info = materialInfo(self);
-    if (!info.falls) return false;
-    if (isMoved(world, moved, x, y)) return false;
-
-    const int first = dir;
-    const int second = -dir;
-
-    // 1. Straight down, into anything this cell can displace.
-    if (trySwap(world, moved, x, y, x, y + 1)) return true;
-
-    // 2. Down-diagonal, so a heap slides into a slope instead of standing in a
-    //    tower. A loose solid only takes this step through an open side cell, so
-    //    grains cannot squeeze through a diagonal crack in a wall.
-    if (isOpen(world, x + first, y) && trySwap(world, moved, x, y, x + first, y + 1)) return true;
-    if (isOpen(world, x + second, y) && trySwap(world, moved, x, y, x + second, y + 1)) return true;
-
-    return false;
+// The topmost non-air row of a column at or below `from`, or a huge number if the
+// column is empty there. Used only by the friction gate, to compare the height of
+// two neighbouring pile surfaces.
+int surfaceRow(const World& world, int x, int from) {
+    for (int y = from; y < world.height(); ++y) {
+        if (world.at(x, y) != Mat::Air) return y;
+    }
+    return 1 << 30;
 }
 
-// Mass-based liquid flow for one cell.
+// Mass-based flow for one cell, shared by liquids and loose solids.
 //
 // Liquids used to be whole cells that swapped places: a cell either held water
 // or it did not. That made a level surface impossible to express, because two
@@ -331,45 +261,70 @@ bool updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
 // two-row minimum drop, a top-of-column guard — fixed one case and broke
 // another, because the quantity underneath had no resolution below one cell.
 //
-// A liquid cell now holds a MASS between 0 and 1 (a little above 1 at the
+// A mobile cell now holds a MASS between 0 and 1 (a little above 1 at the
 // bottom of a deep pool). Movement transfers a fraction of a unit rather than
 // swapping. Two results fall out for free:
 //
-//   * A pool levels itself. Water flows from a fuller cell to a less full
+//   * A pool levels itself. Liquid flows from a fuller cell to a less full
 //     neighbour until the two are equal, wherever they are: no scan, no slope
 //     special case, no guard.
 //   * A settled pool is perfectly still. Equal masses mean zero difference,
 //     which means zero flow. There is nothing left to oscillate.
 //
+// Loose solids run through the same transfer, with one difference that keeps
+// sand sand rather than water: a solid only spreads sideways when the surface
+// slope is steeper than its `friction` allows. That is the angle of repose. So
+// sand still piles in a dune and gravel still holds a slope, while a grain that
+// does fall now falls by a smooth fraction of a unit instead of jumping a whole
+// cell, which is what stops the top grain of a heap flickering.
+//
+// The two material knobs:
+//
+//   * `viscosity` (liquids) - how freely the material moves. It scales the
+//     sideways share (thick liquids equalise slowly), it scales how strongly a
+//     cell answers pressure, and it caps how much of a cell may pour down per
+//     pass (thick liquids ooze rather than fall). Water is 0.
+//   * `friction` (solids) - the steepest surface slope the pile will hold.
+//     It gates the sideways and diagonal steps only; straight-down falling is
+//     always allowed, so a solid still drops freely through open air.
+//
 // The `budget` is the total mass this tick is allowed to move, so a big scene
 // cannot spend unbounded time settling; it is passed in and spent down.
-void flowLiquid(World& world, int x, int y, float& budget) {
+void flowMass(World& world, int x, int y, float& budget) {
     const Mat self = world.at(x, y);
-    if (!materialInfo(self).flows) return;
+    const MaterialInfo& info = materialInfo(self);
+    if (!info.flows && !info.falls) return;
     if (budget <= 0.0f) return;
 
     const float myMass = world.mass(x, y);
     if (myMass <= 0.0f) return;
 
-    // 1. Gravity: pour down into a cell that has room. `room` is the space in
-    //    the cell below; never move more than this cell holds.
+    // A viscous material spreads more slowly. `viscosity` runs 0 (water) to 255
+    // (cold mud) and becomes a sideways-share factor from 1.0 down to a small
+    // floor, so even the thickest liquid still creeps rather than freezing.
     //
-    //    This applies to any positive mass, including a sliver. A cell holding
-    //    0.03 of a unit must still fall, or the slivers shed by the surface stay
-    //    stranded in mid-air forever - mass is conserved either way, but a
-    //    stranded sliver is visible as a floating speck.
+    // This scales the SIDEWAYS share only, never the fall. A thick liquid falls
+    // just as fast as a thin one - lava drops like a stone - and it is the
+    // sideways spreading that viscosity is about. Scaling the fall as well made
+    // thin liquids dump their whole column in one pass and then have only a
+    // shallow film left to spread, so they measured slower than thick ones.
+    const float spreadScale = 1.0f - (info.viscosity / 255.0f) * 0.9f;
+
+    // 1. Gravity: pour down into a cell with room. This applies to any positive
+    //    mass, including a sliver: a cell holding 0.03 of a unit must still
+    //    fall, or slivers shed by a surface stay stranded in mid-air forever.
     const Mat below = world.at(x, y + 1);
-    const bool belowIsLiquid = materialInfo(below).flows;
-    if (below == Mat::Air || belowIsLiquid) {
-        const float belowMass = belowIsLiquid ? world.mass(x, y + 1) : 0.0f;
+    const bool belowFlows = materialInfo(below).flows;
+    const bool belowFalls = materialInfo(below).falls && (below == self);
+    const bool belowTakes = below == Mat::Air || belowFlows || belowFalls;
+    if (belowTakes) {
+        const float belowMass = (belowFlows || belowFalls) ? world.mass(x, y + 1) : 0.0f;
         const float room = 1.0f - belowMass;
         if (room > 0.0f) {
             float flow = std::min(myMass, room);
-            // Never leave a crumb behind: if the remainder would be under the
-            // empty threshold, move all of it.
             if (myMass - flow < kMassEmpty) flow = myMass;
             if (flow > kFlowMin) {
-                const Mat into = belowIsLiquid ? below : self;
+                const Mat into = (belowFlows || belowFalls) ? below : self;
                 world.setMass(x, y, self, myMass - flow);
                 world.setMass(x, y + 1, into, belowMass + flow);
                 budget -= flow;
@@ -378,23 +333,22 @@ void flowLiquid(World& world, int x, int y, float& budget) {
         }
     }
 
-    // Sideways equalisation is the part that needs a real amount of liquid: a
-    // sliver has no surplus to give and shuffling it between neighbours is the
-    // surface jitter this whole model exists to remove.
+    // The sideways step needs a real amount of material: a sliver has no surplus
+    // to give, and shuffling slivers is the surface jitter this model removes.
     if (myMass <= kMassEmpty) return;
 
-    // 2. Equalise: give most of the difference to each neighbour that is lower,
-    //    so a surface slopes down until it is flat. Only outflow is computed
-    //    here; each neighbour offers its own surplus on its own pass.
+    // 2. Spread: hand mass to each neighbour that is lower, so a surface slopes
+    //    down until it is flat. Only outflow is computed here; each neighbour
+    //    offers its own surplus on its own pass.
     //
-    //    Four neighbours are considered: the two beside this cell, and the two
-    //    diagonally below it. The sideways pair is what levels a pool; the
-    //    diagonal pair is what makes a mound collapse outward quickly, because a
-    //    cell on the slope can hand liquid down-and-across at the same time as
-    //    it hands it sideways, instead of waiting for the level to propagate one
-    //    column per tick. That is the single biggest speed-up to settling.
+    //    Four neighbours: the two beside this cell, and the two diagonally
+    //    below. The sideways pair levels a pool; the diagonal pair lets a cell
+    //    on a slope hand liquid down-and-across as well as sideways, instead of
+    //    waiting for the level to propagate one column per tick.
     //
-    //    The share is `kSideShare` rather than a flat half: see the constant.
+    //    A loose solid is gated by friction first: it may only spread when the
+    //    step it is about to take is steeper than its angle of repose. Water
+    //    (friction 0) is never gated, which is why it levels and sand does not.
     float head = 0.0f;
     for (int cy = y - 1; cy >= 0; --cy) {
         const Mat above = world.at(x, cy);
@@ -411,17 +365,40 @@ void flowLiquid(World& world, int x, int y, float& budget) {
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
-        if (there != Mat::Air && !materialInfo(there).flows) continue;
-        const float other = there == Mat::Air ? 0.0f : world.mass(nx, ny);
+        if (there != Mat::Air && !materialInfo(there).flows && !materialInfo(there).falls) continue;
+
+        // Friction gate for loose solids. The step is allowed only when the
+        // drop toward that neighbour is steeper than the repose slope. `friction`
+        // is an unsigned slope: 110 means "will not spread unless the surface
+        // falls at least 0.43 of a row per column", 190 means "holds a cliff".
+        if (info.falls) {
+            // Friction gate for loose solids: this is the angle of repose, and it
+            // is the one thing that keeps sand a dune rather than a pool.
+            //
+            // A solid may only spread toward a neighbour when the neighbour's
+            // surface stands far enough below this cell's own surface. The test
+            // is on surface ROWS, not masses. `friction` is in 64ths of a row per
+            // column: 0 allows any step at all (a solid that levels like water),
+            // 110 needs ~1.7 rows of drop, 190 needs ~3 (a steep slope holds).
+            //
+            // A diagonal step gains a row of drop for free, so it needs one row
+            // less. A pure sideways step is never allowed into thin air.
+            const int drop = surfaceRow(world, nx, ny) - surfaceRow(world, x, y);
+            const int need = info.friction / 64 - (dy[i] != 0 ? 1 : 0);
+            if (drop < need) continue;
+            if (dy[i] == 0 && drop <= 0) continue;
+            if (dy[i] != 0 && drop < 1) continue;
+        }
+
+        const float other = (there == Mat::Air) ? 0.0f : world.mass(nx, ny);
         float otherHead = head;
         if (dy[i] != 0) otherHead -= 1.0f;
         const float diff = (myMass + head) - (other + (otherHead > 0.0f ? otherHead : 0.0f));
-        // Two different bars: a mass-only difference levels a pool, and needs
-        // only the tiny flow floor; a difference that exists because of the
-        // pressure head must clear a much bigger bar, or a settled pool spends
-        // forever shaving slivers off itself.
+        // Two bars: a plain mass difference levels a pool and needs only the tiny
+        // flow floor; a difference that exists because of the pressure head must
+        // clear a bigger bar, or a settled pool spends forever shaving slivers.
         const float bar = (diff - (myMass - other)) > kPressureMin ? kPressureMin : kFlowMin;
-        if (diff > bar) offers[i] = diff * kSideShare;
+        if (diff > bar) offers[i] = diff * kSideShare * spreadScale;
     }
 
     float totalOffer = 0.0f;
@@ -440,16 +417,16 @@ void flowLiquid(World& world, int x, int y, float& budget) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         const Mat there = world.at(nx, ny);
-        const bool liquidThere = materialInfo(there).flows;
-        const float other = liquidThere ? world.mass(nx, ny) : 0.0f;
-        world.setMass(nx, ny, liquidThere ? there : self, other + give);
+        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
+        const float other = mobileThere ? world.mass(nx, ny) : 0.0f;
+        world.setMass(nx, ny, mobileThere ? there : self, other + give);
         budget -= give;
         given += give;
     }
 
     // Same rule as the fall: never leave a crumb under the empty threshold
     // behind, because `setMass` would read it as empty and destroy it. Hand the
-    // crumb to a neighbour that can hold liquid.
+    // crumb to a neighbour that can hold material.
     float remain = world.mass(x, y) - given;
     if (remain < kMassEmpty && remain > 0.0f) {
         for (int i = 0; i < 4; ++i) {
@@ -457,16 +434,16 @@ void flowLiquid(World& world, int x, int y, float& budget) {
             const int ny = y + dy[i];
             if (!world.inBounds(nx, ny)) continue;
             const Mat there = world.at(nx, ny);
-            const bool liquidThere = materialInfo(there).flows;
-            if (there != Mat::Air && !liquidThere) continue;
-            const float other = liquidThere ? world.mass(nx, ny) : 0.0f;
-            world.setMass(nx, ny, liquidThere ? there : self, other + remain);
+            const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
+            if (there != Mat::Air && !mobileThere) continue;
+            const float other = mobileThere ? world.mass(nx, ny) : 0.0f;
+            world.setMass(nx, ny, mobileThere ? there : self, other + remain);
             remain = 0.0f;
             break;
         }
         // If no neighbour could take it, keep the crumb here rather than let
         // `setMass` read it as empty. Mass is never destroyed; a cell that holds
-        // a sliver of liquid simply stays a liquid cell until it can hand it on.
+        // a sliver simply stays a material cell until it can hand it on.
         if (remain > 0.0f) {
             world.setMass(x, y, self, remain);
             return;
@@ -478,7 +455,7 @@ void flowLiquid(World& world, int x, int y, float& budget) {
 }  // namespace
 
 Simulation::Simulation(const World& world) {
-    moved_.assign(world.cellCount(), 0);
+    (void)world;
 }
 
 void Simulation::step(World& world) {
@@ -490,86 +467,19 @@ void Simulation::step(World& world, const SimRect& region) {
     const int width = world.width();
     const int height = world.height();
 
-    if (moved_.size() != world.cellCount()) moved_.assign(world.cellCount(), 0);
-    std::fill(moved_.begin(), moved_.end(), 0);
-
     // Reactions first (lava crusts, ice melts, sulfur blows), then fire, then
     // movement.
     applyReactions(world, region, frame_);
     updateFire(world, region, frame_);
 
-    // Movement runs as two sweeps over the same tick. The first, bottom-up, is
-    // the one that does the falling: a cell lands before the cell above it
-    // moves. The second, top-down and in the opposite column order, only asks
-    // each cell to spread sideways - it is what fills the holes the first sweep
-    // leaves behind, so a raised pile spreads out instead of freezing as a
-    // staircase. Both sweeps share the same `moved` marks, so no cell moves
-    // twice in one tick.
-    //
-    // The second sweep only revisits the rows the first sweep actually moved
-    // something in. A still pool or an empty sky has nothing to spread, and
-    // walking every cell again would double the tick cost for no effect; on a
-    // settled scene the second sweep is now nearly free.
-    //
-    // Which side each cell tries first is a separate matter.
-    //
-    // This used to be one value for the whole grid, flipped every tick. That
-    // kept the left/right bias balanced overall, but it did so in lockstep, and
-    // the flip had a second effect that was worse: because the sweep walks in
-    // the same direction it prefers, reversing it every tick made a pool edge
-    // settle into a *different* shape on alternate ticks. Measured on the edge
-    // of a wide shallow pool, the falling sweep alone changed
-    //
-    //     .....WWWWWW      on one tick, to
-    //     ....W..WWWW      on the next, and back again, forever.
-    //
-    // Both shapes are genuinely settled for the scan order that produced them;
-    // they simply disagree. On screen the edge of the pool therefore pulses
-    // between two outlines, which the eye blends into a flickering,
-    // semi-transparent surface.
-    //
-    // So the scan order is fixed, and the left/right bias is balanced the
-    // other way: each cell has a standing preference of its own, taken from its
-    // own coordinates. Neighbouring cells lean different ways, the preference
-    // does not change from tick to tick, and the grid as a whole stays balanced
-    // because the hash is even-handed. A cell that leans right still tries left
-    // when its first choice is blocked, so nothing is unreachable.
-    //
-    // A preference that *did* change every tick is not a fix: the cell then
-    // flip-flops with a different phase to its neighbour, which measured worse -
-    // ping-ponging fell from 90 cells to 60, but cells that wandered off and
-    // came back tripled, to 276. Stable is the whole point.
-
-    // A cell's standing preference: stable per cell, even-handed across the
-    // grid, and independent of the tick so it does not reverse in sympathy with
-    // its neighbours.
-    auto lean = [&](int x, int y) {
-        return (noise(x, y, 0) & 1u) == 0u ? 1 : -1;
-    };
-
-    // Solids first, bottom-up: a grain lands before the grain above it is asked,
-    // so the result does not depend on the tick. `updateCell` now handles only
-    // loose solids - the liquid cases moved to the mass-based flow below.
-    for (int y = height - 1; y >= 0; --y) {
-        for (int x = 0; x < width; ++x) {
-            if (!inRect(region, x, y)) continue;
-            updateCell(world, moved_, x, y, lean(x, y));
-        }
-    }
-
-    // Then liquids, as a mass transfer rather than a swap. One pass, bottom-up,
-    // so a cell pours downward before it equalises sideways and the result is
-    // stable: two neighbouring cells settle to equal mass and then stop, because
-    // the difference between them is zero and there is nothing left to move.
-    //
-    // The budget bounds the work per tick. Real settling needs no bound, but a
-    // scene full of water must not be able to stall the frame, and every drop
-    // still reaches its level over a few ticks.
+    // One movement pass, bottom-up, over every mobile cell - see the note above
+    // `flowMass` for why a single mass-transfer pass replaced the two whole-cell
+    // sweeps.
     float budget = static_cast<float>(width) * height * 0.5f;
     for (int y = height - 1; y >= 0; --y) {
         for (int x = 0; x < width; ++x) {
             if (!inRect(region, x, y)) continue;
-            flowLiquid(world, x, y, budget);
+            flowMass(world, x, y, budget);
         }
     }
 

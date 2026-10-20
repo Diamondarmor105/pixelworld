@@ -34,18 +34,19 @@ public:
     // Placing a material clears the cell's life counter; the simulation sets
     // life again for cells that are on fire.
     //
-    // Liquid materials also get a full mass of 1.0. That is what lets every
-    // existing "world.set(x, y, Mat::Water)" call keep working unchanged after
-    // liquids became a continuous quantity rather than a whole cell.
+    // Mobile materials — liquids and loose solids alike — also get a full mass
+    // of 1.0, because both now move by transferring a fraction of a unit. That
+    // is what lets every existing "world.set(x, y, Mat::Water/Sand)" call keep
+    // working unchanged after movement became continuous.
     void set(int x, int y, Mat m) {
         if (!inBounds(x, y)) return;
         const size_t index = static_cast<size_t>(y) * width_ + x;
         cells_[index] = static_cast<uint8_t>(m);
         life_[index] = 0;
-        mass_[index] = materialInfo(m).flows ? 1.0f : 0.0f;
+        mass_[index] = isMobile(m) ? 1.0f : 0.0f;
     }
 
-    // How much liquid is in this cell: 0.0 empty, 1.0 full, above 1.0 compressed.
+    // How much material is in this cell: 0.0 empty, 1.0 full, above 1.0 compressed.
     // Always 0 for a non-liquid cell.
     float mass(int x, int y) const {
         if (!inBounds(x, y)) return 0.0f;

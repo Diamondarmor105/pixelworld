@@ -39,7 +39,7 @@ Build mode: fast
   Learner check: Run `make run`, click on the wooden area, and watch the fire crawl along it and leave ash and burnt ground. Does the spread feel right — too fast, too slow, too eager?
   Commit: `Add fire, burning, and ash`
 
-- [ ] **4. Materials react to each other**
+- [x] **4. Materials react to each other**
   Becomes usable: Water meeting lava crusts into stone, fire melting snow and ice into water, water turning dirt to mud, water washing ash away, oil igniting, and sulfur exploding when lava reaches it.
   Why now: These are the reactions that make the world feel alive and unpredictable, and they are pure additions to the simulation core from slice 2 — cheap now, awkward later.
   PRD ref: `prd.md > Materials and how they behave`, `prd.md > Acceptance criteria`
@@ -91,7 +91,8 @@ Build mode: fast
 
 ## Hands-on Checkpoints
 
-- [ ] Early usable behavior explored — after slice 3 (fire spreads on its own), so feedback can shape the world, player and tools that follow
+- [x] Early usable behavior explored — after slice 3 (fire spreads on its own), so feedback can shape the world, player and tools that follow
+  Tried it, confirmed the fire feels right — no change wanted to the spread speed or eagerness. Carrying on as planned.
 - [ ] Final kick-the-tires exploration and feedback completed
 
 ## Final Review
@@ -111,6 +112,10 @@ Reflection:
 Activity mode:
 
 ## Revisions
+
+- Slice 4's water reactions do **not** use the water up — only lava does that. The PRD asks for "consuming the water" on the lava rule alone, and taking water off the soil and ash rules as well would have drained every pond in the game into its own bed within seconds, which is worse than not doing it. So water turns soil and packed dirt into mud and washes ash away while staying exactly as much water as it was. The "meltable" rows also include mud and clay turning back into water, which is the PRD's own table rather than a change of plan.
+- Slice 4's obsidian rule ("large volumes of lava near water") is decided by counting lava in a 7×7 square around the cell — 24 or more out of 49 means deep. Getting a true volume would mean flood-filling a blob every time water touches lava, which is far too much work per tick. The result is the same in practice: a thin trickle cools into stone, a pool cools into obsidian.
+- Slice 4's reaction scenes: the plan asked for the lava pool, pond, ice, ash, oil and sulfur to all live in the self-test scene. They went into the **playable** scene instead (a lava pool in a stone cup, a buried sulfur seam, snow on the left, an ash pile, and glacial ice buried under the sand column) so they are all there to find and play with, and the six checks each got their own small scene so every rule is measured in isolation. A full run of the playable world confirms it settles and stays put: after 1800 ticks the pond still holds all 528 water cells, the lava is still in its cup, and only 27 dirt cells at the pond's edge have turned to mud.
 
 - Slice 3's fire is a probabilistic, burn-in-place model rather than the planned "flammable material turns into fire, then to ash". A flammable cell that catches keeps its own material and is given a `life` counter set from its `burnTime`; while `life` is positive the cell is drawn as flickering flame and spreads to its neighbours, and when `life` runs out it becomes its `burnsInto` (ash for wood, bark, leaves, mycelium and fungal caps; air for oil). Brushed-on flames are separate `Fire` cells that live a fixed `FIRE_LIFE` (8) ticks. Each neighbour catches with a probability per tick (`igniteChance`, 0–255) drawn from a repeatable per-cell hash, so fire creeps outward organically instead of advancing as a hard line — and the self-test burns the same way every run because of that reproducibility. "Oil burns faster and spreads further" is the short `burnTime`, high `igniteChance`, and the fact that flowing materials also ignite their diagonals.
 - Slice 2's water check is `water spreads and stays put` rather than `water flattens`. A per-pixel liquid can be made to level exactly, but this implementation uses a pressure model (a cell with liquid stacked above it reaches sideways in proportion to that depth) and it levels *approximately*: water settles into a hollow and stops moving, but its surface can stay a few cells uneven, and a thin film's leading edge cannot crawl further on flat ground. The check therefore measures what the model actually promises — volume kept, water spreading noticeably wider than it started, and staying inside its basin — instead of an exact surface height, which would fail on a true but ugly liquid. Sand, gravel, soil and ash are unaffected: they settle and pass exactly as planned.

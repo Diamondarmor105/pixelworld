@@ -10,6 +10,10 @@
 // or flow.
 //
 // Rules (see devpost/spec.md > Components > Simulation):
+//   * Materials react to whatever touches them, with no temperature tracked at
+//     all: lava meets water and crusts into stone (obsidian when the lava is
+//     deep), heat melts snow, ice, mud and clay into water, water turns soil
+//     to mud and washes ash away, and lava on sulfur crust blows a crater.
 //   * Fire spreads to neighbouring flammable cells (see their `igniteChance`),
 //     burns for as long as their `burnTime`, then leaves `burnsInto` behind.
 //   * A loose solid tries straight down, then down-left, then down-right.

@@ -121,6 +121,142 @@ void updateFire(World& world, int frame) {
     }
 }
 
+// Does this material take part in any proximity reaction? Answered from the
+// table, so a new reaction only needs a new row value, not a list updated in
+// two places. Everything else - stone, sand, gravel - is skipped by the scan.
+bool canReact(Mat m) {
+    if (m == Mat::Water || m == Mat::Lava || m == Mat::Fire) return true;
+    if (m == Mat::SulfurCrust) return true;
+    if (m == Mat::Soil || m == Mat::PackedDirt) return true;
+    const MaterialInfo& info = materialInfo(m);
+    return info.meltable || info.flammable || info.washedByWater;
+}
+
+// The PRD's "large volumes of lava near water -> obsidian instead of stone".
+// Without flood-filling a blob, a cheap stand-in for volume is how much lava
+// surrounds this cell: deep inside a pool is not the same as the edge of a
+// trickle.
+bool lavaIsDeep(const World& world, int x, int y) {
+    int lava = 0;
+    for (int dy = -3; dy <= 3; ++dy) {
+        for (int dx = -3; dx <= 3; ++dx) {
+            if (world.at(x + dx, y + dy) == Mat::Lava) ++lava;
+        }
+    }
+    return lava >= 24;
+}
+
+// A small explosion. Anything without much blast resistance is cleared out;
+// stone and everything harder mostly holds. The rim catches light.
+void explode(World& world, int cx, int cy, int radius) {
+    const int r2 = radius * radius;
+    for (int y = cy - radius; y <= cy + radius; ++y) {
+        for (int x = cx - radius; x <= cx + radius; ++x) {
+            if (!world.inBounds(x, y)) continue;
+            const int dx = x - cx;
+            const int dy = y - cy;
+            if (dx * dx + dy * dy > r2) continue;
+            const Mat m = world.at(x, y);
+            if (m == Mat::Bedrock) continue;
+            if (materialInfo(m).blastResistance > 60) continue;
+            world.set(x, y, Mat::Air);
+        }
+    }
+
+    const int ring = radius + 1;
+    const int ring2 = ring * ring;
+    for (int y = cy - ring; y <= cy + ring; ++y) {
+        for (int x = cx - ring; x <= cx + ring; ++x) {
+            if (!world.inBounds(x, y)) continue;
+            if (world.at(x, y) != Mat::Air) continue;
+            const int dx = x - cx;
+            const int dy = y - cy;
+            const int d2 = dx * dx + dy * dy;
+            if (d2 <= r2 || d2 > ring2) continue;
+            if ((noise(x, y, 7) & 1u) == 0u) continue;  // a ragged edge, not a neat halo
+            world.set(x, y, Mat::Fire);
+            world.setLife(x, y, FIRE_LIFE);
+        }
+    }
+}
+
+// One proximity rule, between the cell at (x, y) and the one touching it at
+// (nx, ny). Written so each rule fires whichever way round the two appear.
+void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
+    const Mat a = world.at(x, y);
+    const Mat b = world.at(nx, ny);
+    if (!canReact(a) || !canReact(b) || a == b) return;
+
+    // Lava meeting water crusts over: the lava hardens and the water is gone.
+    if ((a == Mat::Lava && b == Mat::Water) || (b == Mat::Lava && a == Mat::Water)) {
+        const bool lavaIsA = (a == Mat::Lava);
+        const int lx = lavaIsA ? x : nx;
+        const int ly = lavaIsA ? y : ny;
+        const int wx = lavaIsA ? nx : x;
+        const int wy = lavaIsA ? ny : y;
+        world.set(lx, ly, lavaIsDeep(world, lx, ly) ? Mat::Obsidian : Mat::Stone);
+        world.set(wx, wy, Mat::Air);
+        return;
+    }
+
+    // Water softens soil and packed dirt into mud, and washes loose ash away.
+    // The water itself is not used up, so a pond never drains into its own bed.
+    if (a == Mat::Water || b == Mat::Water) {
+        const int sx = (a == Mat::Water) ? nx : x;
+        const int sy = (a == Mat::Water) ? ny : y;
+        const Mat ground = world.at(sx, sy);
+        if (ground == Mat::Soil || ground == Mat::PackedDirt) {
+            world.set(sx, sy, Mat::Mud);
+        } else if (materialInfo(ground).washedByWater) {
+            world.set(sx, sy, Mat::Air);
+        }
+        return;
+    }
+
+    // Everything left is heat's doing. Lava acts like fire, only harsher.
+    const bool hotIsA = (a == Mat::Lava || a == Mat::Fire);
+    if (!hotIsA && b != Mat::Lava && b != Mat::Fire) return;
+    const Mat hot = hotIsA ? a : b;
+    const int hx = hotIsA ? nx : x;
+    const int hy = hotIsA ? ny : y;
+    const Mat cold = world.at(hx, hy);
+    const MaterialInfo& info = materialInfo(cold);
+
+    // Snow, ice, mud and clay next to heat turn to water. Nothing tracks a
+    // temperature; being adjacent is the whole trigger.
+    if (info.meltable) {
+        world.set(hx, hy, info.meltsInto);
+        return;
+    }
+
+    // Oil goes up fiercely on the spot. Other flammables catch just as they
+    // would from a flame, and only lava is hot enough to start them itself.
+    if (cold == Mat::Oil) {
+        world.set(hx, hy, Mat::Fire);
+        world.setLife(hx, hy, FIRE_LIFE);
+        return;
+    }
+    if (info.flammable && hot == Mat::Lava) tryIgnite(world, hx, hy, frame);
+
+    // Lava reaching sulfur crust blows a small crater and lights the rim.
+    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy, 5);
+}
+
+// Every pair of touching cells that knows about each other gets a chance to
+// react. Scanning right and down covers each pair exactly once.
+void applyReactions(World& world, int frame) {
+    const int width = world.width();
+    const int height = world.height();
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (!canReact(world.at(x, y))) continue;
+            if (x + 1 < width) reactPair(world, x, y, x + 1, y, frame);
+            if (y + 1 < height) reactPair(world, x, y, x, y + 1, frame);
+        }
+    }
+}
+
 // A liquid that has liquid stacked on top of it is under pressure. It scans up
 // to `reach` cells sideways for an empty cell and takes one step toward the
 // nearest one. Pressure grows with depth, so a deep pool pushes out to find its
@@ -188,7 +324,9 @@ void Simulation::step(World& world) {
     if (moved_.size() != world.cellCount()) moved_.assign(world.cellCount(), 0);
     std::fill(moved_.begin(), moved_.end(), 0);
 
-    // Reactions first (fire spreads and burns out), then movement.
+    // Reactions first (lava crusts, ice melts, sulfur blows), then fire, then
+    // movement.
+    applyReactions(world, frame_);
     updateFire(world, frame_);
 
     // Bottom row first, so a falling cell lands before the cell above it moves.

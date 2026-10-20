@@ -36,8 +36,12 @@ Walking, jumping and the tools arrive in later slices (see `devpost/checklist.md
 ./pixelworld --smoke      # opens the window, renders 60 frames, closes itself
 ```
 
-`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, that fire spreads through a block of wood and burns it down to ash, and that the rendered image comes out the right size.
+`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, and that the rendered image comes out the right size.
 
 ## Status
 
-Slice 3 of 8 complete: fire burns. Wood, bark, leaves, mycelium, fungal caps and oil catch alight, spread the flames to what is next to them, burn for as long as their material allows, and leave ash (or nothing, for oil) behind. The scene now has two trees, a fallen log and an oil slick on the pond to set alight; hold the left mouse button to start a fire and watch it crawl and leave ash. The material table's 27 rows each carry their own burn speed and how easily they catch. Nothing reacts to you yet and the scene is fixed rather than endless — the player, the world generation, the tools and health come next. Progress lives in `devpost/checklist.md`.
+Slice 4 of 8 complete: materials now react to each other, just by touching. Lava meeting water crusts into stone — or into obsidian when the lava is deep enough — and the water is gone. Snow, glacial ice, mud and clay next to lava or flame turn to water. Water soaking into soil or packed dirt softens it into mud, and washes ash away. Oil on lava goes up on the spot. Lava on sulfur crust blows a crater and lights the rim.
+
+The world to play in is bigger now: a lava pool sunk into the ground, a buried sulfur seam that will blow if lava finds it, a snow bank, a pile of ash, and a block of glacial ice buried under the sand column — along with the trees, log, pond, oil slick and sand column already there. The fire brush is still the left mouse button.
+
+Nothing reacts to you yet and the scene is fixed rather than endless — the player, the world generation, the tools and health come next. Progress lives in `devpost/checklist.md`.

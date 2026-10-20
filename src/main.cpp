@@ -249,6 +249,108 @@ bool checkFireSpreads() {
     return passed;
 }
 
+// Self-test: lava meeting water crusts over into stone, and a body of lava deep
+// enough to matter cools into obsidian instead.
+bool checkLavaWater() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+
+    buildLavaWaterScene(world, 1);  // a thin trickle
+    const int lavaBefore = world.count(Mat::Lava);
+    const int stoneBefore = world.count(Mat::Stone);
+    runSteps(world, 40);
+    const int stoneMade = world.count(Mat::Stone) - stoneBefore;
+    const bool trickleWorked = stoneMade > 0 && world.count(Mat::Lava) < lavaBefore;
+
+    buildLavaWaterScene(world, 6);  // a deep pool
+    runSteps(world, 40);
+    const int obsidian = world.count(Mat::Obsidian);
+    const bool poolWorked = obsidian > 0;
+
+    const bool passed = trickleWorked && poolWorked;
+    std::printf("lava+water→stone: %s (stone %d, obsidian %d)\n",
+                passed ? "PASS" : "FAIL", stoneMade, obsidian);
+    return passed;
+}
+
+// Self-test: snow and glacial ice next to flame both turn into water.
+bool checkIceMelts() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildIceMeltsScene(world);
+
+    const int iceBefore = world.count(Mat::GlacialIce) + world.count(Mat::Snow);
+    runSteps(world, 20);
+    const int iceAfter = world.count(Mat::GlacialIce) + world.count(Mat::Snow);
+    const int water = world.count(Mat::Water);
+
+    const bool passed = water > 0 && iceAfter < iceBefore;
+    std::printf("ice melts: %s (water %d, ice %d -> %d)\n",
+                passed ? "PASS" : "FAIL", water, iceBefore, iceAfter);
+    return passed;
+}
+
+// Self-test: water soaking into soil softens it into mud.
+bool checkWaterSoilMud() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildMudScene(world);
+
+    const int soilBefore = world.count(Mat::Soil);
+    runSteps(world, 40);
+    const int soilAfter = world.count(Mat::Soil);
+    const int mud = world.count(Mat::Mud);
+
+    const bool passed = mud > 0 && soilAfter < soilBefore;
+    std::printf("water+soil→mud: %s (mud %d, soil %d -> %d)\n",
+                passed ? "PASS" : "FAIL", mud, soilBefore, soilAfter);
+    return passed;
+}
+
+// Self-test: water washing over ash carries it off rather than leaving it be.
+bool checkAshDissolves() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildAshScene(world);
+
+    const int ashBefore = world.count(Mat::Ash);
+    runSteps(world, 60);
+    const int ashAfter = world.count(Mat::Ash);
+
+    const bool passed = ashAfter < ashBefore / 2;
+    std::printf("ash dissolves: %s (ash %d -> %d)\n",
+                passed ? "PASS" : "FAIL", ashBefore, ashAfter);
+    return passed;
+}
+
+// Self-test: oil touching lava goes up on the spot, fiercely.
+bool checkOilIgnites() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildOilScene(world);
+
+    const int oilBefore = world.count(Mat::Oil);
+    runSteps(world, 6);
+    const int burning = world.burningCount();
+    const int oilAfter = world.count(Mat::Oil);
+
+    const bool passed = burning > 0 && oilAfter < oilBefore;
+    std::printf("oil ignites: %s (burning %d, oil %d -> %d)\n",
+                passed ? "PASS" : "FAIL", burning, oilBefore, oilAfter);
+    return passed;
+}
+
+// Self-test: lava reaching sulfur crust blows a crater out of the dirt above it.
+bool checkSulfurExplodes() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildSulfurScene(world);
+
+    const int dirtBefore = world.count(Mat::PackedDirt);
+    runSteps(world, 30);
+    const int dirtAfter = world.count(Mat::PackedDirt);
+    const int sulfur = world.count(Mat::SulfurCrust);
+
+    const bool passed = sulfur == 0 && dirtAfter < dirtBefore;
+    std::printf("sulfur explodes: %s (dirt %d -> %d)\n",
+                passed ? "PASS" : "FAIL", dirtBefore, dirtAfter);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -277,6 +379,12 @@ int runSelfTest() {
     if (!checkSandSettles()) passed = false;
     if (!checkWaterSpreads()) passed = false;
     if (!checkFireSpreads()) passed = false;
+    if (!checkLavaWater()) passed = false;
+    if (!checkIceMelts()) passed = false;
+    if (!checkWaterSoilMud()) passed = false;
+    if (!checkAshDissolves()) passed = false;
+    if (!checkOilIgnites()) passed = false;
+    if (!checkSulfurExplodes()) passed = false;
 
     return passed ? 0 : 1;
 }

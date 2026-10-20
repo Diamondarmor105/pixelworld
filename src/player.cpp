@@ -183,13 +183,19 @@ bool Player::pushLoose(World& world, float direction) const {
     }
 
     // Shift each column forward, from the far end back toward the player, so no
-    // grain is overwritten on the way.
+    // grain is overwritten on the way. The mass has to travel with the cell:
+    // `world.set` seeds a fresh full unit for every mobile material, so copying
+    // a cell the old way (set then set-Air) created a whole new unit out of
+    // nothing and destroyed the original amount. Use setMass with the source's
+    // actual mass so the shove is conserved.
     for (int r = reach; r >= 1; --r) {
         const int from = front + dir * (r - 1);
         const int to = front + dir * r;
         for (int cy = top; cy < top + HEIGHT; ++cy) {
-            world.set(to, cy, world.at(from, cy));
-            world.set(from, cy, Mat::Air);
+            const Mat m = world.at(from, cy);
+            const float mass = world.mass(from, cy);
+            world.setMass(to, cy, m, mass);
+            world.setMass(from, cy, Mat::Air, 0.0f);
         }
     }
     return true;

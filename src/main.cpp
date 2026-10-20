@@ -352,6 +352,57 @@ bool checkWaterSettlesStill() {
     return passed;
 }
 
+// Self-test: a shallow pool spread over a long flat floor must end up with a
+// FLAT surface, not a ragged one. This was a real bug. The surface-hop rule used
+// to compare the top row of the neighbouring columns to decide whether to step
+// sideways; but the top row of the column the cell just left drops a row as soon
+// as it leaves, so the comparison flipped and one stray cell rode a row above
+// the rest of the pool, hopping to the neighbour and back every tick - a single
+// pixel blinking forever on the surface. The rule now compares the water depth
+// BELOW the cell, which does not move when the cell leaves, so an already-level
+// pool is a genuine tie and the cell stays put.
+//
+// The test counts "stray top" columns: a column whose water sits a row higher
+// than BOTH of its neighbours, i.e. a lone cell poking up out of an otherwise
+// flat surface. A pool that has settled must have none. (Before the fix this
+// scene settled with 27 of them.)
+bool checkWaterSpreadsFlat() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    world.fill(Mat::Air);
+
+    // A long flat stone floor, and a shallow pool spread across part of it - a
+    // thin layer, which is exactly where the ragged surface used to appear.
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 240; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 40; x <= 60; ++x) {
+        for (int y = 237; y < 240; ++y) world.set(x, y, Mat::Water);
+    }
+
+    Simulation sim(world);
+    for (int i = 0; i < 2000; ++i) sim.step(world);
+
+    // A stray top: water in this column starts a row above the water in both
+    // neighbours. A flat surface has none.
+    auto topOf = [&](int x) {
+        for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+            if (world.at(x, y) == Mat::Water) return y;
+        }
+        return MAX_GRID_HEIGHT;
+    };
+    int stray = 0;
+    for (int x = 1; x < MAX_GRID_WIDTH - 1; ++x) {
+        const int t = topOf(x);
+        if (t >= MAX_GRID_HEIGHT) continue;
+        if (t < topOf(x - 1) && t < topOf(x + 1)) ++stray;
+    }
+
+    const bool passed = stray == 0 && world.count(Mat::Water) > 0;
+    std::printf("water spreads to a flat surface: %s (stray top cells %d)\n",
+                passed ? "PASS" : "FAIL", stray);
+    return passed;
+}
+
 // Self-test: fire must spread through a block of wood, burn it down and go out,
 // leaving ash behind.
 bool checkFireSpreads() {
@@ -638,6 +689,7 @@ int runSelfTest() {
     if (!checkSandSettles()) passed = false;
     if (!checkWaterSpreads()) passed = false;
     if (!checkWaterSettlesStill()) passed = false;
+    if (!checkWaterSpreadsFlat()) passed = false;
     if (!checkFireSpreads()) passed = false;
     if (!checkLavaWater()) passed = false;
     if (!checkIceMelts()) passed = false;

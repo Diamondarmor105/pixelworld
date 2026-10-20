@@ -302,43 +302,51 @@ bool shoveGrain(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
     return trySwap(world, moved, x, y, tx, y);
 }
 
-// The topmost row of `liquid` anywhere in column x. A column holding no liquid
-// at all reports "below the world", i.e. infinitely short.
-int columnTop(const World& world, Mat liquid, int x) {
-    for (int y = 0; y < world.height(); ++y) {
-        if (world.at(x, y) == liquid) return y;
+// How much of `liquid` sits in column x below row y. This is the cell's own
+// "head of water": how deep the pool is under it. Unlike the top row of the
+// column, this does not change when the cell itself hops away, which is what
+// makes it safe to compare.
+int liquidBelow(const World& world, Mat liquid, int x, int y) {
+    int depth = 0;
+    for (int i = y + 1; i < world.height(); ++i) {
+        if (world.at(x, i) == liquid) ++depth;
     }
-    return world.height();
+    return depth;
 }
 
 // A surface cell - nothing stacked on top, so no pressure. It looks sideways
-// along its own row for a column whose liquid surface is strictly lower than
-// its own, and steps one cell toward the nearest one it finds. That is what
-// lets a poured pool spread out to a flat surface rather than settling as a
-// 45-degree wedge (the diagonal roll below only ever moves downhill, so on its
-// own it stops as a staircase).
+// along its own row for a column whose liquid sits deeper than its own, and
+// steps one cell toward the nearest one it finds. That is what lets a poured
+// pool spread out to a flat surface rather than settling as a 45-degree wedge
+// (the diagonal roll below only ever moves downhill, so on its own it stops as
+// a staircase).
 //
-// Two details matter. First, an empty neighbour column counts as lower (it
-// reports "below the world"), so a pool spreads out across dry ground too.
+// Two details matter. First, an empty neighbour column counts as deeper (it
+// reports no liquid at all), so a pool spreads out across dry ground too.
 // Second, `reach` lets the cell look several columns ahead, exactly like the
 // pressured path does: with a reach of one the pool can only even out by one
 // column per tick, which takes thousands of ticks to level a tank and then
-// stalls a few rows short. Only stepping toward a STRICTLY lower column keeps
-// it biased downhill, which is what stops two cells trading a spot back and
-// forth forever.
+// stalls a few rows short.
+//
+// The comparison is depth below the cell, not the neighbour column's top row.
+// Comparing tops looks right but is not: a stray cell riding one row above a
+// flat pool sees the column it just left as "lower" (its top is now the row
+// below), so it hops right, then the column it left looks lower again, and it
+// hops back - a single pixel blinking every tick. Depth below the row does not
+// move when the cell leaves, so a pool that is already level is a genuine tie
+// and the cell stays put.
 bool levelHop(World& world, std::vector<uint8_t>& moved, int x, int y, int dir, int reach) {
     const Mat self = world.at(x, y);
-    int myTop = y;
-    while (myTop - 1 >= 0 && world.at(x, myTop - 1) == self) --myTop;
+    const int myDepth = liquidBelow(world, self, x, y);
 
     for (int distance = 1; distance <= reach; ++distance) {
         const int tx = x + dir * distance;
         if (!world.inBounds(tx, y)) return false;
         if (world.at(tx, y) != Mat::Air) return false;  // blocked: cannot pass through other cells
         if (isMoved(world, moved, tx, y)) return false;
-        const int theirTop = columnTop(world, self, tx);
-        if (theirTop > myTop) {
-            // A lower column is in reach: step one cell toward it.
+        const int theirDepth = liquidBelow(world, self, tx, y);
+        if (theirDepth > myDepth) {
+            // A deeper column is in reach: step one cell toward it.
             return trySwap(world, moved, x, y, x + dir, y);
         }
     }

@@ -328,6 +328,58 @@ bool updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
     // the surface grain that jitters in place.
     if (!info.flows) return false;
 
+    // A liquid surface cell may walk sideways into liquid when the column it
+    // steps toward has a lower surface.
+    //
+    // This is the one move the plain rules lack, and it is what makes a slope
+    // cascade. On a slope a surface cell's own-row neighbours are liquid, so
+    // the sideways-into-air step below is unavailable, and without this the
+    // slope stands forever: measured on a stepped basin, exactly 3 cells of 200
+    // ever left the high terrace, all by tick 1000, and then nothing moved for
+    // the next 99,000 ticks while the far terraces stayed bone dry.
+    //
+    // Two guards keep it from becoming a churn engine, both found by measuring
+    // a settled pool rather than guessing:
+    //
+    //   * Only the cell at the TOP of its own column takes the step. Applying
+    //     it to every liquid cell had buried cells walking sideways out of a
+    //     pool and tearing holes in it.
+    //   * Only a drop of at least two rows counts. A settled pool's surface
+    //     ruffles by a single row (measured: y=188..189 across the whole
+    //     width), and treating that as "lower" made cells hop between
+    //     neighbouring columns forever - surface movement went from 8 columns
+    //     of 480 to 320.
+    //
+    // With both guards, a slope levels and a settled pool does not move at all.
+    if (world.at(x, y + 1) != Mat::Air && materialInfo(world.at(x, y + 1)).flows) {
+        // Topmost non-air cell of a column, and only if it is liquid.
+        auto surfaceRow = [&](int cx) -> int {
+            if (cx < 0 || cx >= world.width()) return 1 << 30;
+            for (int cy = 0; cy < world.height(); ++cy) {
+                const Mat m = world.at(cx, cy);
+                if (m == Mat::Air) continue;
+                return materialInfo(m).flows ? cy : (1 << 30);
+            }
+            return 1 << 30;
+        };
+
+        const int mySurface = surfaceRow(x);
+        if (y == mySurface) {
+            constexpr int kReach = 8;
+            constexpr int kMinDrop = 2;
+            int bestGap = 0, bestDir = 0;
+            for (int d = 1; d <= kReach; ++d) {
+                const int lt = surfaceRow(x - d);
+                const int rt = surfaceRow(x + d);
+                if (rt < (1 << 30) && (rt - mySurface) > bestGap) { bestGap = rt - mySurface; bestDir = +1; }
+                if (lt < (1 << 30) && (lt - mySurface) > bestGap) { bestGap = lt - mySurface; bestDir = -1; }
+            }
+            if (bestDir != 0 && bestGap >= kMinDrop) {
+                if (trySwap(world, moved, x, y, x + bestDir, y)) return true;
+            }
+        }
+    }
+
     // A cell on the surface of a settled pool has nothing left to do.
     //
     // It cannot fall and it cannot roll, so the only move the rules leave it is

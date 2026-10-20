@@ -27,16 +27,19 @@ struct SimRect {
 //   * Fire spreads to neighbouring flammable cells (see their `igniteChance`),
 //     burns for as long as their `burnTime`, then leaves `burnsInto` behind.
 //   * A loose solid tries straight down, then down-left, then down-right.
-//   * A liquid tries straight down, then down-diagonal, then sideways. That is
-//     all: there is no pressure, no depth measurement and no periodic tidying
+//   * A liquid tries straight down, then down-diagonal, then sideways. On top of
+//     that, a liquid cell at the top of its column may step sideways into the
+//     liquid of a neighbouring column when that column's surface is at least
+//     two rows lower. That is the one move the plain rules lack, and it is what
+//     lets a slope cascade instead of standing forever; without it, water
+//     poured into a stepped basin settles as a 45-degree staircase that never
+//     changes again. The two-row allowance is what keeps a settled pool still:
+//     a pool's own surface ruffles by about a row, and treating a one-row
+//     difference as a slope made every surface cell hop between columns.
+//     All: there is no pressure, no depth measurement and no periodic tidying
 //     pass. Water therefore behaves like a very slippery granular material - it
-//     runs downhill and spreads out, but a pile of it settles as a heap rather
-//     than finding a dead-flat level. A liquid that has nowhere to fall and
-//     nowhere to roll - so it is part of a settled pool's surface - takes no
-//     sideways step at all, because on a flat surface that step only ever trades
-//     places with a neighbour and makes the surface shimmer. A liquid resting on
-//     the ground rather than on liquid is left free to keep creeping outward, so
-//     a pool can still spread to find its level.
+//     runs downhill and spreads out, but a thin film on a flat floor may still
+//     stop short of the far wall rather than creeping all the way.
 //   * A material can move into empty space, or swap with a lighter loose solid
 //     or liquid, so sand sinks through water and burning oil keeps burning as
 //     it flows. A liquid that cannot fall or step aside shoves a lighter grain

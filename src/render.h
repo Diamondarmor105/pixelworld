@@ -21,9 +21,11 @@ public:
     // Copies the colours of every cell into the image buffer.
     void updateImage(const World& world);
 
-    // Uploads the image buffer (if needed) and draws it at `scale`
-    // with nearest-neighbour filtering, so cells stay sharp squares.
-    void drawScaled(int scale, int offsetX = 0, int offsetY = 0);
+    // Uploads the image buffer (if needed) and draws the part of the world at
+    // (worldX, worldY), `viewWidth` by `viewHeight` cells, stretched with
+    // nearest-neighbour filtering so cells stay sharp squares.
+    void drawView(int worldX, int worldY, int viewWidth, int viewHeight,
+                  int scale, int offsetX = 0, int offsetY = 0);
 
     const Image& image() const { return image_; }
 

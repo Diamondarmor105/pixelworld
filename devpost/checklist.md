@@ -49,7 +49,7 @@ Build mode: fast
   Learner check: Run `make run`. Break the ground between the pond and the lava and watch the water crust it into stone; set fire near the ice and watch it turn to water. Any reaction that looks wrong or happens too suddenly?
   Commit: `Add material reactions: solidification, melting, mud, dissolving, oil, sulfur`
 
-- [ ] **5. You can walk and jump around the world**
+- [x] **5. You can walk and jump around the world**
   Becomes usable: A small player block with gravity walks left and right, jumps, stands on ground, can't fall through solid material, and the camera follows them.
   Why now: The player is a separate small system that needs a stable simulation underneath it. Building it against a small hand-made level proves movement and collision before the endless world adds its own moving parts.
   PRD ref: `prd.md > The player, health, and death`, `prd.md > The world, generation, and the camera`
@@ -112,6 +112,13 @@ Reflection:
 Activity mode:
 
 ## Revisions
+
+- Slice 5 kept the level that slices 1–4 built and added the wall, gap and sand pit to it, rather than throwing it away for a fresh small one. The small hand-made level was only ever a stand-in for the endless world in slice 6, so replacing the good one would have deleted work and lost everything worth looking at for no gain. The wall, the gap and the sand pit are all there as asked.
+- Slice 5's player steps up to 2 cells while walking. Without it the rolling ground — which rises one cell every few columns — stops you dead every few steps, which is unplayable. Two cells is enough to walk over bumps and the edges of small piles without noticing, and far less than the wall, the cliff or the side of the gap, which still stop you exactly as they should.
+- Slice 5's leaves do not block the player: you push through foliage, so trees are scenery rather than barriers. The trunks were also cut down to below jump height (20 and 16 cells, from 34 and 26) for the same reason — the level is a strip, so anything taller than a jump walls off half of it. Trees are still there to burn.
+- Slice 5's sand column now hangs above the ground instead of resting on it. Resting on the ground it stayed a 51-cell rectangular wall (a vertical face of sand is stable), which looked artificial and blocked the road. Hanging in the air it falls and spreads into a heap you can walk up, which is what it was always meant to demonstrate.
+- Slice 5's camera is clamped left and right as well as top and bottom, which the spec deliberately left open. That is only because the level is a fixed 1440 cells wide right now; when slice 6 makes the world endless the horizontal clamp has nothing to clamp against and simply stops mattering.
+- Slice 5's player climbs out of anything that lands on them rather than being stuck forever. Material does not know the player exists, so sand falling on you fills the cells you occupy and would otherwise lock the game. While buried, gravity is off and they rise steadily out, in whatever direction is being held. They also stand on sand rather than sinking through it, which is `spec.md > Components > Player` in its own words ("falling is stopped by any solid or loose-solid pixel, which also lets the player stand on piles of sand"), so "sand pit" here means a dish you walk down into and stand in.
 
 - Slice 4's water reactions do **not** use the water up — only lava does that. The PRD asks for "consuming the water" on the lava rule alone, and taking water off the soil and ash rules as well would have drained every pond in the game into its own bed within seconds, which is worse than not doing it. So water turns soil and packed dirt into mud and washes ash away while staying exactly as much water as it was. The "meltable" rows also include mud and clay turning back into water, which is the PRD's own table rather than a change of plan.
 - Slice 4's obsidian rule ("large volumes of lava near water") is decided by counting lava in a 7×7 square around the cell — 24 or more out of 49 means deep. Getting a true volume would mean flood-filling a blob every time water touches lava, which is far too much work per tick. The result is the same in practice: a thin trickle cools into stone, a pool cools into obsidian.

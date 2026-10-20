@@ -123,6 +123,47 @@ void buildSulfurSeam(World& world, int startX, int endX, int y, int thickness) {
     }
 }
 
+// A wall of stone standing on the ground, to walk into and be stopped by.
+void buildWall(World& world, int centerX, int groundY, int halfWidth, int height) {
+    for (int y = groundY - height; y < groundY; ++y) {
+        for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
+            world.set(centerX + dx, y, Mat::Stone);
+        }
+    }
+}
+
+// A gap in the ground: a pit with a flat floor, wide enough that it has to be
+// jumped rather than walked.
+void buildGap(World& world, int centerX, int halfWidth, int depth) {
+    const int height = world.height();
+    for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
+        const int x = centerX + dx;
+        const int surface = surfaceRow(x, height);
+        for (int y = surface; y < surface + depth; ++y) {
+            world.set(x, y, Mat::Air);
+        }
+    }
+}
+
+// A sand pit: a shallow dish cut into the ground and lined with loose sand, with
+// sides gentle enough to walk down into and straight back out of. The player
+// stands on the sand rather than sinking through it - see devpost/spec.md >
+// Components > Player.
+void buildSandPit(World& world, int centerX, int halfWidth, int depth) {
+    const int height = world.height();
+    for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
+        const int x = centerX + dx;
+        const int surface = surfaceRow(x, height);
+        const float t = static_cast<float>(std::abs(dx)) / static_cast<float>(halfWidth);
+        const int drop = static_cast<int>(static_cast<float>(depth) * (1.0f - t * t));
+
+        for (int y = surface; y < surface + drop; ++y) world.set(x, y, Mat::Air);
+        for (int y = surface + drop; y < surface + drop + 6; ++y) {
+            world.set(x, y, Mat::Sand);
+        }
+    }
+}
+
 // A stone floor across the bottom of a test scene.
 void buildTestFloor(World& world, int floorTop) {
     for (int x = 0; x < world.width(); ++x) {
@@ -141,10 +182,17 @@ void buildTestScene(World& world) {
     world.fill(Mat::Air);
     buildGround(world);
 
-    // A column of sand resting on the ground. It collapses as soon as the
-    // simulation runs, which is the point.
+    // Something to walk into, something to jump over, and something to stand in.
+    // The wall is short enough to jump with a well-timed leap, so it stops you
+    // walking but does not wall off half the level.
+    buildWall(world, width * 22 / 100, surfaceRow(width * 22 / 100, height), 4, 16);
+    buildGap(world, width * 64 / 100, 10, 18);
+    buildSandPit(world, width * 56 / 100, 26, 12);
+
+    // A column of sand hanging in the air above the ground. It falls and spreads
+    // into a heap you can walk up, which is the point.
     const int columnCenter = width / 2;
-    const int columnBottom = surfaceRow(columnCenter, height) - 1;
+    const int columnBottom = surfaceRow(columnCenter, height) - 44;
     for (int y = columnBottom - 50; y <= columnBottom; ++y) {
         for (int x = columnCenter - 14; x <= columnCenter + 14; ++x) {
             world.set(x, y, Mat::Sand);
@@ -199,9 +247,10 @@ void buildTestScene(World& world) {
         }
     }
 
-    // Two trees and a fallen log, to burn.
-    buildTree(world, width * 42 / 100, surfaceRow(width * 42 / 100, height), 34, 14);
-    buildTree(world, width * 90 / 100, surfaceRow(width * 90 / 100, height), 26, 11);
+    // Two trees and a fallen log, to burn. The trunks are shorter than the
+    // player can jump, so they are scenery rather than barriers.
+    buildTree(world, width * 42 / 100, surfaceRow(width * 42 / 100, height), 20, 13);
+    buildTree(world, width * 90 / 100, surfaceRow(width * 90 / 100, height), 16, 10);
     buildLog(world, width * 84 / 100, width * 84 / 100 + 18, surfaceRow(width * 84 / 100, height));
 
     // A lava pool in its own stone cup, walled off from the pond. Break the

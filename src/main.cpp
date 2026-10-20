@@ -3,8 +3,10 @@
 #include <cstring>
 #include <limits>
 
+#include "camera.h"
 #include "generation.h"
 #include "materials.h"
+#include "player.h"
 #include "raylib.h"
 #include "render.h"
 #include "sim.h"
@@ -16,10 +18,33 @@ constexpr int MAX_GRID_WIDTH = 480;
 constexpr int MAX_GRID_HEIGHT = 270;
 constexpr int PREFERRED_SCALE = 3;
 
+// The world is larger than the screen; the view scrolls over it.
+constexpr int WORLD_WIDTH_SCREENS = 3;
+constexpr int WORLD_HEIGHT_MARGIN = 48;
+
+// How far beyond the edge of the screen the simulation still runs, so material
+// arriving from off-screen has already settled by the time you see it.
+constexpr int SIM_MARGIN = 16;
+
+// Where the player starts: on the ground, near the left end of the level.
+constexpr float PLAYER_START_X = 100.0f;
+
 // Steps the simulation for however long a self-test needs.
 void runSteps(World& world, int steps) {
     Simulation sim(world);
     for (int i = 0; i < steps; ++i) sim.step(world);
+}
+
+// Drops the player onto whatever is underneath them at `x`, so they start
+// standing on the ground rather than falling out of the sky.
+float groundBelow(const World& world, int x) {
+    for (int y = 0; y < world.height(); ++y) {
+        const Mat m = world.at(x, y);
+        if (m == Mat::Air || m == Mat::Fire || m == Mat::Foliage ||
+            materialInfo(m).flows) continue;
+        return static_cast<float>(y - Player::HEIGHT);
+    }
+    return 0.0f;
 }
 
 // The simulated grid and the window are chosen to suit the actual display: the
@@ -79,42 +104,82 @@ int runGame(bool smoke) {
 
     const Viewport viewport = chooseViewport();
 
-    World world(viewport.gridWidth, viewport.gridHeight);
+    // The world is bigger than the screen: the view is a window into it. It is
+    // three screens wide, and a little taller than the view so there is
+    // somewhere to descend to and the camera has something to clamp against.
+    const int worldWidth = viewport.gridWidth * WORLD_WIDTH_SCREENS;
+    const int worldHeight = viewport.gridHeight + WORLD_HEIGHT_MARGIN;
+
+    World world(worldWidth, worldHeight);
     buildTestScene(world);
 
     Simulation sim(world);
-    Renderer renderer(viewport.gridWidth, viewport.gridHeight);
+    Renderer renderer(worldWidth, worldHeight);
+
+    GameCamera camera(viewport.gridWidth, viewport.gridHeight, PLAYER_START_X, 0.0f);
+    Player player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
+    camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
+    camera.clamp(world.width(), world.height());
 
     int frames = 0;
     while (!WindowShouldClose()) {
-        // Temporary: `R` rebuilds the scene so it can be watched from the start.
+        // Temporary: `R` rebuilds the scene and puts the player back, so it can
+        // be watched from the start.
         if (IsKeyPressed(KEY_R)) {
             buildTestScene(world);
             sim = Simulation(world);
+            player = Player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
         }
 
-        // Temporary debug brush: hold the left mouse button to set fire to the
-        // wood and leaves. Replaced by real tools in slice 7.
+        float moveInput = 0.0f;
+        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) moveInput += 1.0f;
+        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveInput -= 1.0f;
+        const bool jump = IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_W) || IsKeyPressed(KEY_UP);
+
+        player.tick(world, moveInput, jump);
+        camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
+        camera.clamp(world.width(), world.height());
+
+        // Temporary debug brush: hold the left mouse button to set fire. The
+        // screen position has to be turned back into a world position first.
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             const Vector2 mouse = GetMousePosition();
-            const int gx = static_cast<int>((mouse.x - viewport.offsetX) / viewport.scale);
-            const int gy = static_cast<int>((mouse.y - viewport.offsetY) / viewport.scale);
+            const int gx = camera.viewX() +
+                           static_cast<int>((mouse.x - viewport.offsetX) / viewport.scale);
+            const int gy = camera.viewY() +
+                           static_cast<int>((mouse.y - viewport.offsetY) / viewport.scale);
             paintFire(world, gx, gy, 3);
         }
 
-        sim.step(world);
+        // Only the pixels near the player get simulated. Everything else waits,
+        // exactly as it was, until it comes into view.
+        const SimRect region{
+            std::max(0, camera.viewX() - SIM_MARGIN),
+            std::max(0, camera.viewY() - SIM_MARGIN),
+            std::min(world.width() - 1, camera.viewX() + viewport.gridWidth - 1 + SIM_MARGIN),
+            std::min(world.height() - 1, camera.viewY() + viewport.gridHeight - 1 + SIM_MARGIN)};
+        sim.step(world, region);
+
         renderer.updateImage(world);
+
+        const float offsetX = static_cast<float>(viewport.offsetX) -
+                              static_cast<float>(camera.viewX() * viewport.scale);
+        const float offsetY = static_cast<float>(viewport.offsetY) -
+                              static_cast<float>(camera.viewY() * viewport.scale);
 
         BeginDrawing();
         ClearBackground(BLACK);
-        renderer.drawScaled(viewport.scale, viewport.offsetX, viewport.offsetY);
+        renderer.drawView(camera.viewX(), camera.viewY(), viewport.gridWidth, viewport.gridHeight,
+                          viewport.scale, viewport.offsetX, viewport.offsetY);
+        player.draw(offsetX, offsetY, viewport.scale);
         EndDrawing();
 
         ++frames;
         if (smoke && frames >= 60) {
-            std::printf("window %dx%d (render %dx%d) | grid %dx%d | scale %d | frames %d\n",
+            std::printf("window %dx%d (render %dx%d) | view %dx%d | world %dx%d | scale %d | frames %d\n",
                         GetScreenWidth(), GetScreenHeight(), GetRenderWidth(), GetRenderHeight(),
-                        viewport.gridWidth, viewport.gridHeight, viewport.scale, frames);
+                        viewport.gridWidth, viewport.gridHeight, worldWidth, worldHeight,
+                        viewport.scale, frames);
             TakeScreenshot("smoke.png");
 
             // Read the frame back and measure how much of the window the world
@@ -351,6 +416,82 @@ bool checkSulfurExplodes() {
     return passed;
 }
 
+// A flat stone floor across the bottom of a player test scene.
+void buildPlayerTestFloor(World& world, int floorTop) {
+    world.fill(Mat::Air);
+    for (int y = floorTop; y < world.height(); ++y) {
+        for (int x = 0; x < world.width(); ++x) world.set(x, y, Mat::Stone);
+    }
+}
+
+constexpr int PLAYER_TEST_FLOOR = MAX_GRID_HEIGHT - 20;
+
+// Self-test: dropped onto the floor, the player falls, lands on top of it and
+// stays exactly there.
+bool checkPlayerRestsOnGround() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
+
+    Player player(100.0f, 40.0f);
+    for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
+
+    const int restRow = static_cast<int>(player.y());
+    for (int i = 0; i < 120; ++i) player.tick(world, 0.0f, false);
+
+    const bool passed = player.onGround() && restRow == PLAYER_TEST_FLOOR - Player::HEIGHT &&
+                        static_cast<int>(player.y()) == restRow;
+    std::printf("player rests on ground: %s (row %d, expected %d)\n",
+                passed ? "PASS" : "FAIL", restRow, PLAYER_TEST_FLOOR - Player::HEIGHT);
+    return passed;
+}
+
+// Self-test: a jump carries the player up, and they come back down to the same
+// row they started from.
+bool checkPlayerJumpsAndLands() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
+
+    Player player(100.0f, 40.0f);
+    for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
+    const int restRow = static_cast<int>(player.y());
+
+    player.tick(world, 0.0f, true);  // jump
+    int topRow = restRow;
+    for (int i = 0; i < 240; ++i) {
+        player.tick(world, 0.0f, false);
+        topRow = std::min(topRow, static_cast<int>(player.y()));
+    }
+
+    const bool passed = topRow < restRow - 10 && static_cast<int>(player.y()) == restRow;
+    std::printf("player jumps and lands: %s (rest row %d, top row %d)\n",
+                passed ? "PASS" : "FAIL", restRow, topRow);
+    return passed;
+}
+
+// Self-test: walking into a stone wall stops the player on the near side of it.
+bool checkPlayerBlockedByStone() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
+
+    const int wallLeft = 140;
+    for (int y = PLAYER_TEST_FLOOR - 40; y < PLAYER_TEST_FLOOR; ++y) {
+        for (int x = wallLeft; x < wallLeft + 6; ++x) world.set(x, y, Mat::Stone);
+    }
+
+    Player player(100.0f, 40.0f);
+    for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
+    for (int i = 0; i < 600; ++i) player.tick(world, 1.0f, false);
+
+    const int restCol = static_cast<int>(player.x());
+    for (int i = 0; i < 120; ++i) player.tick(world, 1.0f, false);
+
+    const bool passed = static_cast<int>(player.x()) == restCol &&
+                        restCol + Player::WIDTH == wallLeft;
+    std::printf("player blocked by stone: %s (column %d, wall at %d)\n",
+                passed ? "PASS" : "FAIL", restCol, wallLeft);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -385,6 +526,9 @@ int runSelfTest() {
     if (!checkAshDissolves()) passed = false;
     if (!checkOilIgnites()) passed = false;
     if (!checkSulfurExplodes()) passed = false;
+    if (!checkPlayerRestsOnGround()) passed = false;
+    if (!checkPlayerJumpsAndLands()) passed = false;
+    if (!checkPlayerBlockedByStone()) passed = false;
 
     return passed ? 0 : 1;
 }

@@ -23,11 +23,13 @@ make clean        # remove build output
 
 | Key | Action |
 | --- | --- |
+| `A` / `D` or ← / → | Walk left and right |
+| `Space` / `W` / `↑` | Jump (only from the ground) |
 | Left mouse | Set fire, to watch it spread (temporary debug brush — the real tools arrive in slice 7) |
-| `R` | Rebuild the scene (temporary, while there is no player to move and the world is not generated yet) |
+| `R` | Rebuild the scene (temporary, while the world is not generated yet) |
 | `Esc` | Quit |
 
-Walking, jumping and the tools arrive in later slices (see `devpost/checklist.md`).
+The three tools arrive in a later slice (see `devpost/checklist.md`).
 
 ## Self-test
 
@@ -36,12 +38,12 @@ Walking, jumping and the tools arrive in later slices (see `devpost/checklist.md
 ./pixelworld --smoke      # opens the window, renders 60 frames, closes itself
 ```
 
-`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, and that the rendered image comes out the right size.
+`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, that the player lands on the ground, jumps and comes back down, and cannot walk through a stone wall, and that the rendered image comes out the right size.
 
 ## Status
 
-Slice 4 of 8 complete: materials now react to each other, just by touching. Lava meeting water crusts into stone — or into obsidian when the lava is deep enough — and the water is gone. Snow, glacial ice, mud and clay next to lava or flame turn to water. Water soaking into soil or packed dirt softens it into mud, and washes ash away. Oil on lava goes up on the spot. Lava on sulfur crust blows a crater and lights the rim.
+Slice 5 of 8 complete: there is now a player. A 6×10 block with gravity walks left and right, jumps, lands on the ground, can be stopped by a wall, and is pushed up over small bumps instead of getting stuck on them. The camera follows with a small dead zone, so walking does not make the whole picture jitter, and it never looks above the sky or below the bottom of the world. Only the pixels near you are simulated — the rest of the world waits exactly as it was until you walk over to it.
 
-The world to play in is bigger now: a lava pool sunk into the ground, a buried sulfur seam that will blow if lava finds it, a snow bank, a pile of ash, and a block of glacial ice buried under the sand column — along with the trees, log, pond, oil slick and sand column already there. The fire brush is still the left mouse button.
+The level has grown to go with it: three screens wide, with a stone wall to walk into and jump over, a gap to jump, a sand pit to walk down into and stand in, and everything from slice 4 still there. Sand now hangs in the air and falls into a heap you can climb when the world starts. If you stand under it, you get buried — and climb back out.
 
-Nothing reacts to you yet and the scene is fixed rather than endless — the player, the world generation, the tools and health come next. Progress lives in `devpost/checklist.md`.
+The last big piece is next: the endless world. Progress lives in `devpost/checklist.md`.

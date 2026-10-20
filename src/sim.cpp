@@ -18,6 +18,10 @@ bool isOpen(const World& world, int x, int y) {
     return world.at(x, y) == Mat::Air;
 }
 
+bool inRect(const SimRect& r, int x, int y) {
+    return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+}
+
 bool isMoved(const World& world, const std::vector<uint8_t>& moved, int x, int y) {
     return moved[static_cast<size_t>(y) * world.width() + x] != 0;
 }
@@ -95,12 +99,13 @@ void spreadFire(World& world, int x, int y, int frame, bool includeDiagonals) {
 // Fire and burning fuel age by one tick, spread to whatever is next to them, and
 // - when their time runs out - turn into their `burnsInto` (ash for wood and
 // leaves, nothing for oil).
-void updateFire(World& world, int frame) {
+void updateFire(World& world, const SimRect& region, int frame) {
     const int width = world.width();
     const int height = world.height();
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
+            if (!inRect(region, x, y)) continue;
             const Mat m = world.at(x, y);
             const uint8_t life = world.life(x, y);
 
@@ -244,12 +249,13 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
 
 // Every pair of touching cells that knows about each other gets a chance to
 // react. Scanning right and down covers each pair exactly once.
-void applyReactions(World& world, int frame) {
+void applyReactions(World& world, const SimRect& region, int frame) {
     const int width = world.width();
     const int height = world.height();
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
+            if (!inRect(region, x, y)) continue;
             if (!canReact(world.at(x, y))) continue;
             if (x + 1 < width) reactPair(world, x, y, x + 1, y, frame);
             if (y + 1 < height) reactPair(world, x, y, x, y + 1, frame);
@@ -318,6 +324,11 @@ Simulation::Simulation(const World& world) {
 }
 
 void Simulation::step(World& world) {
+    const SimRect all{0, 0, world.width() - 1, world.height() - 1};
+    step(world, all);
+}
+
+void Simulation::step(World& world, const SimRect& region) {
     const int width = world.width();
     const int height = world.height();
 
@@ -326,16 +337,20 @@ void Simulation::step(World& world) {
 
     // Reactions first (lava crusts, ice melts, sulfur blows), then fire, then
     // movement.
-    applyReactions(world, frame_);
-    updateFire(world, frame_);
+    applyReactions(world, region, frame_);
+    updateFire(world, region, frame_);
 
     // Bottom row first, so a falling cell lands before the cell above it moves.
     const int dir = (frame_ % 2 == 0) ? 1 : -1;
     for (int y = height - 1; y >= 0; --y) {
         if (dir > 0) {
-            for (int x = 0; x < width; ++x) updateCell(world, moved_, x, y, dir, frame_);
+            for (int x = 0; x < width; ++x) {
+                if (inRect(region, x, y)) updateCell(world, moved_, x, y, dir, frame_);
+            }
         } else {
-            for (int x = width - 1; x >= 0; --x) updateCell(world, moved_, x, y, dir, frame_);
+            for (int x = width - 1; x >= 0; --x) {
+                if (inRect(region, x, y)) updateCell(world, moved_, x, y, dir, frame_);
+            }
         }
     }
 

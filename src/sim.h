@@ -5,9 +5,19 @@
 
 #include "world.h"
 
-// The per-pixel physics. One call to step() advances the whole world by one
-// tick: fire spreads, then every loose solid and liquid gets one chance to fall
-// or flow.
+// The part of the grid the simulation works on this tick, in cells, inclusive at
+// both ends. Only the pixels near the player are simulated; the rest of the
+// world is held still until it comes into view.
+struct SimRect {
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+};
+
+// The per-pixel physics. One call to step() advances the world by one tick:
+// reactions, then fire, then every loose solid and liquid in the region gets
+// one chance to fall or flow.
 //
 // Rules (see devpost/spec.md > Components > Simulation):
 //   * Materials react to whatever touches them, with no temperature tracked at
@@ -30,7 +40,12 @@ class Simulation {
 public:
     explicit Simulation(const World& world);
 
+    // Advances the whole grid. Used by the self-tests, which build small worlds.
     void step(World& world);
+
+    // Advances just the region. Used by the game, so that the pixels a long way
+    // off-screen are left exactly as they are.
+    void step(World& world, const SimRect& region);
 
     int frame() const { return frame_; }
 

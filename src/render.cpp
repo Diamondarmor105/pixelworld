@@ -36,7 +36,8 @@ void Renderer::updateImage(const World& world) {
     }
 }
 
-void Renderer::drawScaled(int scale, int offsetX, int offsetY) {
+void Renderer::drawView(int worldX, int worldY, int viewWidth, int viewHeight,
+                        int scale, int offsetX, int offsetY) {
     if (!textureReady_) {
         texture_ = LoadTextureFromImage(image_);
         SetTextureFilter(texture_, TEXTURE_FILTER_POINT);
@@ -44,6 +45,11 @@ void Renderer::drawScaled(int scale, int offsetX, int offsetY) {
     } else {
         UpdateTexture(texture_, image_.data);
     }
-    DrawTextureEx(texture_, Vector2{static_cast<float>(offsetX), static_cast<float>(offsetY)},
-                  0.0f, static_cast<float>(scale), WHITE);
+
+    const Rectangle source{static_cast<float>(worldX), static_cast<float>(worldY),
+                           static_cast<float>(viewWidth), static_cast<float>(viewHeight)};
+    const Rectangle dest{static_cast<float>(offsetX), static_cast<float>(offsetY),
+                         static_cast<float>(viewWidth * scale),
+                         static_cast<float>(viewHeight * scale)};
+    DrawTexturePro(texture_, source, dest, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
 }

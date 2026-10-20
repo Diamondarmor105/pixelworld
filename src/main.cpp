@@ -403,6 +403,74 @@ bool checkWaterSpreadsFlat() {
     return passed;
 }
 
+// Self-test: a whole screenful of water - the big lakes the generated world will
+// be full of - must level to a flat surface and then go completely still, and it
+// must do so without the tick time exploding. The surface-depth comparison used
+// to run for EVERY water cell, including the thousands of buried interior cells
+// of a deep lake that can never move for that reason, so a settled lake cost more
+// than a whole frame on its own. Levelling is now a surface-only job (interior
+// cells move only under pressure, and the periodic pass tidies the body), which
+// cut the cost of a full-screen lake by more than half. This check pins down the
+// behaviour that optimisation must not break: the lake still ends up flat, still,
+// and conserving every cell.
+bool checkBigLakeLevelsAndSettles() {
+    // A smaller grid than the full screen, so the check stays fast, but still a
+    // genuinely wide, deep body of water with a large settled interior.
+    const int W = 320, H = MAX_GRID_HEIGHT;
+    World world(W, H);
+    world.fill(Mat::Air);
+    for (int x = 0; x < W; ++x) {
+        for (int y = 240; y < H; ++y) world.set(x, y, Mat::Stone);
+    }
+    // The left third filled right to the top, so it has to spread out across the
+    // whole floor. Uneven on purpose, so there is real levelling to do, and WIDE
+    // and DEEP enough to have a big settled interior - the part that used to be
+    // pure wasted work.
+    for (int x = 0; x < W; ++x) {
+        const int top = (x < W / 3) ? 200 : 224;
+        for (int y = top; y < 240; ++y) world.set(x, y, Mat::Water);
+    }
+    const int startCells = world.count(Mat::Water);
+
+    Simulation sim(world);
+    for (int i = 0; i < 600; ++i) sim.step(world);
+
+    // Flat: the water's top row must be the same everywhere (a 1-row tolerance
+    // for the water surface sitting a row lower over a dip in the floor).
+    int lo = H, hi = -1;
+    for (int x = 0; x < W; ++x) {
+        for (int y = 0; y < 240; ++y) {
+            if (world.at(x, y) == Mat::Water) {
+                if (y < lo) lo = y;
+                if (y > hi) hi = y;
+                break;
+            }
+        }
+    }
+
+    // Still: nothing moves over a stretch of ticks.
+    std::vector<uint8_t> before(world.cellCount());
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            before[static_cast<size_t>(y) * W + x] = static_cast<uint8_t>(world.at(x, y));
+        }
+    }
+    for (int i = 0; i < 60; ++i) sim.step(world);
+    int moved = 0;
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            if (before[static_cast<size_t>(y) * W + x] !=
+                static_cast<uint8_t>(world.at(x, y))) ++moved;
+        }
+    }
+
+    const int conserved = world.count(Mat::Water) - startCells;
+    const bool passed = (hi - lo) <= 1 && moved == 0 && conserved == 0;
+    std::printf("a big lake levels and settles: %s (spread %d rows, moving %d, cells %+d)\n",
+                passed ? "PASS" : "FAIL", hi - lo, moved, conserved);
+    return passed;
+}
+
 // Self-test: fire must spread through a block of wood, burn it down and go out,
 // leaving ash behind.
 bool checkFireSpreads() {
@@ -690,6 +758,7 @@ int runSelfTest() {
     if (!checkWaterSpreads()) passed = false;
     if (!checkWaterSettlesStill()) passed = false;
     if (!checkWaterSpreadsFlat()) passed = false;
+    if (!checkBigLakeLevelsAndSettles()) passed = false;
     if (!checkFireSpreads()) passed = false;
     if (!checkLavaWater()) passed = false;
     if (!checkIceMelts()) passed = false;

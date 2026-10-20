@@ -38,7 +38,7 @@ The three tools arrive in a later slice (see `devpost/checklist.md`).
 ./pixelworld --smoke      # opens the window, renders 60 frames, closes itself
 ```
 
-`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, levels off to a genuinely flat surface and then goes completely still (not one pixel blinking on the edge), that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, that the player lands on the ground, jumps and comes back down, cannot walk through a stone wall but does plough through a small heap of grain — while a heavier heap of the same size stops them — and that the rendered image comes out the right size.
+`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, levels off to a genuinely flat surface and then goes completely still (not one pixel blinking on the edge), that even a whole lakeside of water levels to a flat surface and settles without losing a single cell, that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, that the player lands on the ground, jumps and comes back down, cannot walk through a stone wall but does plough through a small heap of grain — while a heavier heap of the same size stops them — and that the rendered image comes out the right size.
 
 ## Status
 

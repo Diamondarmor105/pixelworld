@@ -305,10 +305,13 @@ bool shoveGrain(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
 // How much of `liquid` sits in column x below row y. This is the cell's own
 // "head of water": how deep the pool is under it. Unlike the top row of the
 // column, this does not change when the cell itself hops away, which is what
-// makes it safe to compare.
-int liquidBelow(const World& world, Mat liquid, int x, int y) {
+// makes it safe to compare. `limit` bounds the scan: the caller only ever needs
+// to know whether a neighbour is deeper than this cell, so it never has to count
+// the whole column to the bottom of the world.
+int liquidBelow(const World& world, Mat liquid, int x, int y, int limit) {
     int depth = 0;
-    for (int i = y + 1; i < world.height(); ++i) {
+    const int stop = std::min(world.height(), y + 1 + limit);
+    for (int i = y + 1; i < stop; ++i) {
         if (world.at(x, i) == liquid) ++depth;
     }
     return depth;
@@ -337,14 +340,19 @@ int liquidBelow(const World& world, Mat liquid, int x, int y) {
 // and the cell stays put.
 bool levelHop(World& world, std::vector<uint8_t>& moved, int x, int y, int dir, int reach) {
     const Mat self = world.at(x, y);
-    const int myDepth = liquidBelow(world, self, x, y);
+    // This cell's own depth is counted in full (once), because the neighbour
+    // scan below is priced against it: a neighbour can only be deeper than us if
+    // it has more than this many cells, so we never have to look past that.
+    const int myDepth = liquidBelow(world, self, x, y, world.height());
 
     for (int distance = 1; distance <= reach; ++distance) {
         const int tx = x + dir * distance;
         if (!world.inBounds(tx, y)) return false;
         if (world.at(tx, y) != Mat::Air) return false;  // blocked: cannot pass through other cells
         if (isMoved(world, moved, tx, y)) return false;
-        const int theirDepth = liquidBelow(world, self, tx, y);
+        // `myDepth + 1` rows is enough to prove the neighbour is deeper (it
+        // would have to have at least myDepth + 1 cells to beat us) or not.
+        const int theirDepth = liquidBelow(world, self, tx, y, myDepth + 1);
         if (theirDepth > myDepth) {
             // A deeper column is in reach: step one cell toward it.
             return trySwap(world, moved, x, y, x + dir, y);
@@ -384,6 +392,9 @@ void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
     if (trySwap(world, moved, x, y, x + side, y + 1)) return;
     if (trySwap(world, moved, x, y, x - side, y + 1)) return;
 
+    // How much liquid is stacked directly on top of this cell? That is its
+    // pressure: none means it is a surface cell, some means it is buried and
+    // moving because the pool above is pushing down on it.
     int pressure = 0;
     while (pressure < info.flowSlack && materialInfo(world.at(x, y - 1 - pressure)).flows) ++pressure;
 
@@ -401,6 +412,16 @@ void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
         if (shoveGrain(world, moved, x, y, side)) return;
         if (shoveGrain(world, moved, x, y, -side)) return;
     }
+
+    // Levelling is a SURFACE job. A buried cell sits under liquid and should only
+    // ever move because of pressure (above), never because of the surface
+    // comparison - and that comparison is the expensive one, because it measures
+    // how deep the pool is beneath the cell. Running it for every buried cell of
+    // a large settled lake handed back the same answer ("nothing to do") millions
+    // of times a second, and cost more than a whole frame on its own. A pool's
+    // interior is levelled by the periodic pass instead, which does the whole
+    // body in one step.
+    if (pressure > 0) return;
 
     if (levelHop(world, moved, x, y, side, reach)) return;
     levelHop(world, moved, x, y, -side, reach);

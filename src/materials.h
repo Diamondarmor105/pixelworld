@@ -42,6 +42,9 @@ enum class Mat : uint8_t {
     Acid,
     Mud,
 
+    // Gases — rise, spread and dissipate (inverted liquids).
+    Smoke,
+
     // Effects and byproducts.
     SulfurCrust,
     Ash,
@@ -70,6 +73,10 @@ struct MaterialInfo {
                               // an unsigned slope. 0 = no friction at all (levels
                               // like water), 255 = will hold a vertical cliff. Only
                               // read for materials with `falls`.
+    bool rises;               // gas: rises instead of falling, and spreads upward.
+                              // Treated as an inverted liquid: mass-based flow with
+                              // gravity pointing up. Only read for materials with
+                              // `rises`.
     bool flammable;           // catches fire from an adjacent flame
     uint8_t burnTime;         // ticks a burning cell lasts before it becomes `burnsInto`
     uint8_t igniteChance;     // 0..255 chance per burning neighbour per tick of catching
@@ -94,8 +101,8 @@ bool isBurning(Mat m, uint8_t life);
 
 inline bool isAir(Mat m) { return m == Mat::Air; }
 
-// Loose solids and liquids are the materials that move.
+// Loose solids, liquids and gases are the materials that move.
 inline bool isMobile(Mat m) {
     const MaterialInfo& info = materialInfo(m);
-    return info.falls || info.flows;
+    return info.falls || info.flows || info.rises;
 }

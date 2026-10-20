@@ -40,11 +40,9 @@ void Renderer::updateImage(const World& world) {
                 // against black and the water comes out dark grey to black. The
                 // colour is mixed toward the air colour instead, and the alpha
                 // is left at 255.
-                if (materialInfo(m).flows) {
+                if (materialInfo(m).flows || materialInfo(m).rises) {
                     const float mass = world.mass(x, y);
                     const float full = mass > 1.0f ? 1.0f : (mass < 0.0f ? 0.0f : mass);
-                    // Water starts as a pale version of its own colour and
-                    // thickens to the full colour as the cell fills.
                     const Color air = materialInfo(Mat::Air).color;
                     const float mix = 0.45f + 0.55f * full;
                     color.r = static_cast<unsigned char>(air.r + (color.r - air.r) * mix);

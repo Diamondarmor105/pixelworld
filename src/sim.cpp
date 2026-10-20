@@ -60,18 +60,18 @@ void tryIgnite(World& world, int x, int y, int frame) {
     if (roll(x, y, frame, info.igniteChance)) world.setLife(x, y, info.burnTime);
 }
 
-// Flames reach the four neighbours, and for materials that flow (oil, and later
-// lava) the diagonals too, so fire creeps further through a liquid.
+// Flames reach all eight neighbours. Diagonal spread used to be restricted to
+// flowing materials (oil), which left gaps in tree canopies: a leaf could sit
+// diagonal to a burning leaf and never catch. Every flammable material now
+// spreads to all eight, which is what makes a fire consume a whole tree instead
+// of leaving isolated unburned pixels.
 void spreadFire(World& world, int x, int y, int frame, bool includeDiagonals) {
-    tryIgnite(world, x + 1, y, frame);
-    tryIgnite(world, x - 1, y, frame);
-    tryIgnite(world, x, y + 1, frame);
-    tryIgnite(world, x, y - 1, frame);
-    if (includeDiagonals) {
-        tryIgnite(world, x + 1, y + 1, frame);
-        tryIgnite(world, x - 1, y + 1, frame);
-        tryIgnite(world, x + 1, y - 1, frame);
-        tryIgnite(world, x - 1, y - 1, frame);
+    (void)includeDiagonals;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) continue;
+            tryIgnite(world, x + dx, y + dy, frame);
+        }
     }
 }
 
@@ -82,6 +82,25 @@ void updateFire(World& world, const SimRect& region, int frame) {
     const int width = world.width();
     const int height = world.height();
 
+    // Place a puff of smoke in the first air cell found scanning upward from
+    // (cx, cy). Returns true if placed. Smoke prefers to rise; if nothing is
+    // open above, it tries the sides.
+    auto spawnSmoke = [&](int cx, int cy, float amount) -> bool {
+        for (int yy = cy - 1; yy >= cy - 6 && yy >= 0; --yy) {
+            if (world.at(cx, yy) == Mat::Air) {
+                world.setMass(cx, yy, Mat::Smoke, amount);
+                return true;
+            }
+        }
+        for (int d = -1; d <= 1; d += 2) {
+            if (world.inBounds(cx + d, cy) && world.at(cx + d, cy) == Mat::Air) {
+                world.setMass(cx + d, cy, Mat::Smoke, amount);
+                return true;
+            }
+        }
+        return false;
+    };
+
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             if (!inRect(region, x, y)) continue;
@@ -90,8 +109,12 @@ void updateFire(World& world, const SimRect& region, int frame) {
 
             if (m == Mat::Fire) {
                 spreadFire(world, x, y, frame, false);
-                if (life <= 1) world.set(x, y, Mat::Air);
-                else world.setLife(x, y, life - 1);
+                if (life <= 1) {
+                    spawnSmoke(x, y, 0.6f);
+                    world.set(x, y, Mat::Air);
+                } else {
+                    world.setLife(x, y, life - 1);
+                }
                 continue;
             }
 
@@ -99,11 +122,29 @@ void updateFire(World& world, const SimRect& region, int frame) {
             if (!info.flammable || life == 0) continue;
 
             spreadFire(world, x, y, frame, info.flows);
-            if (life <= 1) world.set(x, y, info.burnsInto);
-            else world.setLife(x, y, life - 1);
+            if (life <= 1) {
+                world.set(x, y, info.burnsInto);
+                spawnSmoke(x, y, 0.6f);
+            } else {
+                world.setLife(x, y, life - 1);
+                // While burning, occasionally puff smoke upward.
+                if (roll(x, y, frame, 40)) spawnSmoke(x, y, 0.3f);
+            }
+        }
+    }
+
+    // Smoke dissipates: lose a little mass each tick, and vanish when empty.
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (!inRect(region, x, y)) continue;
+            if (world.at(x, y) != Mat::Smoke) continue;
+            float m = world.mass(x, y) - 0.05f;
+            if (m <= kMassEmpty) world.setMass(x, y, Mat::Air, 0.0f);
+            else world.setMass(x, y, Mat::Smoke, m);
         }
     }
 }
+
 
 // Does this material take part in any proximity reaction? Answered from the
 // table, so a new reaction only needs a new row value, not a list updated in
@@ -316,119 +357,85 @@ bool handOffCrumb(World& world, int x, int y, Mat self) {
     return false;
 }
 
-// The `budget` is the total mass this tick is allowed to move, so a big scene
-// cannot spend unbounded time settling; it is passed in and spent down.
+
 void flowMass(World& world, int x, int y, float& budget) {
     const Mat self = world.at(x, y);
     const MaterialInfo& info = materialInfo(self);
-    if (!info.flows && !info.falls) return;
+    if (!info.flows && !info.falls && !info.rises) return;
     if (budget <= 0.0f) return;
 
     const float myMass = world.massAt(x, y);
     if (myMass <= 0.0f) return;
 
-    // A viscous material spreads more slowly. `viscosity` runs 0 (water) to 255
-    // (cold mud) and becomes a sideways-share factor from 1.0 down to a small
-    // floor, so even the thickest liquid still creeps rather than freezing.
-    //
-    // This scales the SIDEWAYS share only, never the fall. A thick liquid falls
-    // just as fast as a thin one - lava drops like a stone - and it is the
-    // sideways spreading that viscosity is about. Scaling the fall as well made
-    // thin liquids dump their whole column in one pass and then have only a
-    // shallow film left to spread, so they measured slower than thick ones.
+    // Direction of gravity for this material. Liquids and loose solids fall;
+    // gases rise. Everything else in this function is the same either way, with
+    // the vertical axis flipped, so a gas is literally an inverted liquid.
+    const bool rises = info.rises;
+    const int gDir = rises ? -1 : +1;   // +1 = down, -1 = up
+
     const float spreadScale = 1.0f - (info.viscosity / 255.0f) * 0.9f;
 
-    // 1. Gravity: pour down into a cell with room. This applies to any positive
-    //    mass, including a sliver, and it is NEVER gated by the seed rule. A cell
-    //    holding 0.03 of a unit must still fall, or slivers shed by a surface stay
-    //    stranded in mid-air forever - and a stranded speck is far more visible
-    //    than the flicker the seed rule exists to prevent. Falling is also not
-    //    where the flicker came from: the blink was lateral supply into a cell
-    //    that then drained straight back down.
-    const Mat below = world.at(x, y + 1);
-    const bool belowFlows = materialInfo(below).flows;
-    const bool belowFalls = materialInfo(below).falls && (below == self);
-    const bool belowTakes = below == Mat::Air || belowFlows || belowFalls;
-    if (belowTakes) {
-        const float belowMass = (belowFlows || belowFalls) ? world.massAt(x, y + 1) : 0.0f;
-        const float room = 1.0f - belowMass;
-        if (room > 0.0f) {
-            float flow = std::min(myMass, room);
-            if (myMass - flow < kMassEmpty) flow = myMass;
-            if (flow > kFlowMin) {
-                const Mat into = (belowFlows || belowFalls) ? below : self;
-                // Same add-based accounting as the spread below: the recipient is
-                // added to at its live value, and this cell keeps its live mass
-                // minus what it poured. Both are needed because a neighbour
-                // processed earlier in this pass may already have written either
-                // cell, and an overwrite from the snapshot would destroy it.
-                const float belowNow = (belowFlows || belowFalls) ? world.mass(x, y + 1) : 0.0f;
-                world.setMass(x, y, self, world.mass(x, y) - flow);
-                world.setMass(x, y + 1, into, belowNow + flow);
-                budget -= flow;
-                return;
+    // 1. Gravity (or anti-gravity for gases): pour along gDir into a cell with
+    //    room. Applies to any positive mass, including a sliver.
+    const int gy = y + gDir;
+    if (gy >= 0 && gy < world.height()) {
+        const Mat along = world.at(x, gy);
+        const bool alongFlows = materialInfo(along).flows;
+        const bool alongFalls = materialInfo(along).falls && (along == self);
+        const bool alongRises = materialInfo(along).rises && (along == self);
+        const bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
+        if (alongTakes) {
+            const float alongMass = (alongFlows || alongFalls || alongRises) ? world.massAt(x, gy) : 0.0f;
+            const float room = 1.0f - alongMass;
+            if (room > 0.0f) {
+                float flow = std::min(myMass, room);
+                if (myMass - flow < kMassEmpty) flow = myMass;
+                if (flow > kFlowMin) {
+                    const Mat into = (alongFlows || alongFalls || alongRises) ? along : self;
+                    const float alongNow = (alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f;
+                    world.setMass(x, y, self, world.mass(x, y) - flow);
+                    world.setMass(x, gy, into, alongNow + flow);
+                    budget -= flow;
+                    return;
+                }
             }
         }
     }
 
-    // The sideways step needs a real amount of material: a sliver has no surplus
-    // to give, and shuffling slivers is the surface jitter this model removes.
-    //
-    // But a sliver must not be stranded. If this cell cannot reach the spread
-    // code below, it still tries to hand its crumb to a neighbour that can take
-    // it, so the last trace of a flow always finds its way onward instead of
-    // sitting in mid-air for the rest of the run.
     if (myMass <= kMassEmpty) {
         handOffCrumb(world, x, y, self);
         return;
     }
 
-    // 2. Spread: hand mass to each neighbour that is lower, so a surface slopes
-    //    down until it is flat. Only outflow is computed here; each neighbour
-    //    offers its own surplus on its own pass.
-    //
-    //    Four neighbours: the two beside this cell, and the two diagonally
-    //    below. The sideways pair levels a pool; the diagonal pair lets a cell
-    //    on a slope hand liquid down-and-across as well as sideways, instead of
-    //    waiting for the level to propagate one column per tick.
-    //
-    //    A loose solid is gated by friction first: it may only spread when the
-    //    step it is about to take is steeper than its angle of repose. Water
-    //    (friction 0) is never gated, which is why it levels and sand does not.
+    // Head: count same-type cells stacked in the gravity direction.
     float head = 0.0f;
-    for (int cy = y - 1; cy >= 0; --cy) {
-        const Mat above = world.at(x, cy);
-        if (above != Mat::Air && !materialInfo(above).flows) break;
-        if (above == Mat::Air) break;
-        head += 1.0f;
+    if (!rises) {
+        for (int cy = y - 1; cy >= 0; --cy) {
+            const Mat above = world.at(x, cy);
+            if (above != Mat::Air && !materialInfo(above).flows && !materialInfo(above).rises) break;
+            if (above == Mat::Air) break;
+            head += 1.0f;
+        }
+    } else {
+        for (int cy = y + 1; cy < world.height(); ++cy) {
+            const Mat below = world.at(x, cy);
+            if (below != Mat::Air && !materialInfo(below).flows && !materialInfo(below).rises) break;
+            if (below == Mat::Air) break;
+            head += 1.0f;
+        }
     }
 
     float offers[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const int dx[4] = {-1, +1, -1, +1};
-    const int dy[4] = {0, 0, +1, +1};
+    const int dy[4] = {0, 0, gDir, gDir};
     for (int i = 0; i < 4; ++i) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
-        if (there != Mat::Air && !materialInfo(there).flows && !materialInfo(there).falls) continue;
+        if (there != Mat::Air && !materialInfo(there).flows && !materialInfo(there).falls && !materialInfo(there).rises) continue;
 
-        // Friction gate for loose solids. The step is allowed only when the
-        // drop toward that neighbour is steeper than the repose slope. `friction`
-        // is an unsigned slope: 110 means "will not spread unless the surface
-        // falls at least 0.43 of a row per column", 190 means "holds a cliff".
         if (info.falls) {
-            // Friction gate for loose solids: this is the angle of repose, and it
-            // is the one thing that keeps sand a dune rather than a pool.
-            //
-            // A solid may only spread toward a neighbour when the neighbour's
-            // surface stands far enough below this cell's own surface. The test
-            // is on surface ROWS, not masses. `friction` is in 64ths of a row per
-            // column: 0 allows any step at all (a solid that levels like water),
-            // 110 needs ~1.7 rows of drop, 190 needs ~3 (a steep slope holds).
-            //
-            // A diagonal step gains a row of drop for free, so it needs one row
-            // less. A pure sideways step is never allowed into thin air.
             const int drop = surfaceRow(world, nx, ny) - surfaceRow(world, x, y);
             const int need = info.friction / 64 - (dy[i] != 0 ? 1 : 0);
             if (drop < need) continue;
@@ -440,14 +447,7 @@ void flowMass(World& world, int x, int y, float& budget) {
         float otherHead = head;
         if (dy[i] != 0) otherHead -= 1.0f;
         const float diff = (myMass + head) - (other + (otherHead > 0.0f ? otherHead : 0.0f));
-        // Two bars: a plain mass difference levels a pool and needs only the tiny
-        // flow floor; a difference that exists because of the pressure head must
-        // clear a bigger bar, or a settled pool spends forever shaving slivers.
         const float bar = (diff - (myMass - other)) > kPressureMin ? kPressureMin : kFlowMin;
-        // Oscillation clamp: a difference of a hair is two cells trading the same
-        // crumb back and forth. Require a slightly larger difference than one
-        // flow unit before either side bothers, so a settled surface stops
-        // moving entirely rather than chattering at the last bit of resolution.
         if (diff <= kFlowMin * 2.0f) continue;
         if (diff > bar) offers[i] = diff * kSideShare * spreadScale;
     }
@@ -455,36 +455,9 @@ void flowMass(World& world, int x, int y, float& budget) {
     float totalOffer = 0.0f;
     for (int i = 0; i < 4; ++i) totalOffer += offers[i];
     if (totalOffer <= kFlowMin) return;
-    // Never give away more than this cell holds, and never more than the tick's
-    // budget allows.
     const float scale = std::min(1.0f, std::min(myMass, budget) / totalOffer);
     if (scale <= 0.0f) return;
 
-    // The source's share of what it just handed out.
-    //
-    // Every number below comes from the SNAPSHOT: `myMass` is what this cell held
-    // before the pass started, and each `other` is what the recipient held then.
-    // The recipient's cell is then ADDED to (`current + give`), not overwritten,
-    // because an earlier cell in this same pass may already have handed it
-    // something. Adding is what keeps the pass conservative: this cell gives
-    // exactly `given` away, and each recipient gains exactly what it was handed.
-    //
-    // `self` is written from the snapshot (`myMass - given`) for the same reason
-    // in reverse: reading the live value would also subtract gifts that arrived
-    // from neighbours already processed this tick, and destroy them.
-    //
-    // A recipient that is currently EMPTY must end up holding at least a seed, or
-    // the write is skipped and the material stays here. That is the seed rule from
-    // world.h doing its work at the only place it can be enforced. Without it a
-    // cell at the edge of a pool receives a sliver, becomes a material cell for
-    // one tick, pours the sliver straight back down and vanishes again.
-    // What this cell gives away, and what it is left holding.
-    //
-    // `given` is subtracted from the cell's LIVE mass, not from `myMass`. The
-    // snapshot was only used to DECIDE how much to offer; the moment anything is
-    // written the live value is the truth, and it may already include a gift from
-    // a neighbour processed earlier in this pass. Subtracting from the snapshot
-    // would throw that gift away.
     float given = 0.0f;
     for (int i = 0; i < 4; ++i) {
         const float give = offers[i] * scale;
@@ -492,11 +465,9 @@ void flowMass(World& world, int x, int y, float& budget) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         const Mat there = world.at(nx, ny);
-        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
+        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
         const float other = mobileThere ? world.massAt(nx, ny) : 0.0f;
-        if (other + give < kMassEmpty) continue;   // would blink: keep it here
-        // Add to whatever the cell already holds now, which may already include a
-        // gift from a neighbour processed earlier in this pass.
+        if (other + give < kMassEmpty) continue;
         const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
         world.setMass(nx, ny, mobileThere ? there : self, current + give);
         budget -= give;
@@ -504,33 +475,27 @@ void flowMass(World& world, int x, int y, float& budget) {
     }
 
     float remain = world.mass(x, y) - given;
-
-    // Same rule as the fall: never leave a crumb under the empty threshold behind,
-    // because `setMass` would read it as empty and destroy it. Hand the crumb to a
-    // neighbour that can hold material.
     if (remain < kMassEmpty && remain > 0.0f) {
         for (int i = 0; i < 4; ++i) {
             const int nx = x + dx[i];
             const int ny = y + dy[i];
             if (!world.inBounds(nx, ny)) continue;
             const Mat there = world.at(nx, ny);
-            const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
+            const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
             if (there != Mat::Air && !mobileThere) continue;
             const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
             world.setMass(nx, ny, mobileThere ? there : self, current + remain);
             remain = 0.0f;
             break;
         }
-        // If no neighbour could take it, keep the crumb here rather than let
-        // `setMass` read it as empty. Mass is never destroyed; a cell that holds
-        // a sliver simply stays a material cell until it can hand it on.
         if (remain > 0.0f) {
-            world.setMass(x, y, self, world.mass(x, y) + remain);
+            world.setMass(x, y, self, world.mass(x, y));
             return;
         }
     }
     world.setMass(x, y, self, remain);
 }
+
 
 }  // namespace
 

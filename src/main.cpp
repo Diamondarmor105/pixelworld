@@ -257,39 +257,44 @@ bool checkWaterSpreads() {
         for (int y = 184; y < 200; ++y) world.set(x, y, Mat::Water);
     }
 
+    const float startMass = world.totalMass(Mat::Water);
     const int startCells = world.count(Mat::Water);
     int startColumns = 0;
     for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
         for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
-            if (world.at(x, y) == Mat::Water) { ++startColumns; break; }
+            if (world.mass(x, y) >= 0.5f) { ++startColumns; break; }
         }
     }
 
     runSteps(world, 3000);
 
-    const int endCells = world.count(Mat::Water);
+    const float endMass = world.totalMass(Mat::Water);
+    const int endCells = world.cellsWithMass(Mat::Water, 0.5f);
     int endColumns = 0;
     int leaks = 0;
     int aboveRim = 0;
     for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
         for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
-            if (world.at(x, y) != Mat::Water) continue;
+            if (world.mass(x, y) < 0.02f) continue;
             if (x < 214 || x > 265) ++leaks;
             if (y < 160) ++aboveRim;
         }
     }
     for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
         for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
-            if (world.at(x, y) == Mat::Water) { ++endColumns; break; }
+            if (world.mass(x, y) >= 0.5f) { ++endColumns; break; }
         }
     }
 
-    const bool conserved = endCells == startCells;
+    // Conservation is a statement about mass now, not about cell count: a pool
+    // that levels spreads the same water over more, thinner cells, so the number
+    // of cells legitimately falls while the water itself is unchanged.
+    const bool conserved = std::abs(endMass - startMass) <= startMass * 0.01f;
     const bool spread = endColumns >= startColumns * 5 / 4;
     const bool contained = leaks == 0 && aboveRim == 0;
     const bool passed = conserved && spread && contained;
-    std::printf("water spreads and stays put: %s (cells %d -> %d, columns %d -> %d, leaks %d, above rim %d)\n",
-                passed ? "PASS" : "FAIL", startCells, endCells, startColumns, endColumns, leaks, aboveRim);
+    std::printf("water spreads and stays put: %s (mass %.0f -> %.0f, cells %d -> %d, columns %d -> %d, leaks %d, above rim %d)\n",
+                passed ? "PASS" : "FAIL", startMass, endMass, startCells, endCells, startColumns, endColumns, leaks, aboveRim);
     return passed;
 }
 
@@ -317,7 +322,11 @@ bool checkWaterSettlesStill() {
     }
 
     Simulation sim(world);
-    for (int i = 0; i < 1500; ++i) sim.step(world);
+    // Mass-based flow settles more gradually than the old whole-cell rules: the
+    // water creeps across the pit floor as a gentle gradient rather than jumping.
+    // This pool is poured into only half of a wider pit, so it has real
+    // spreading to finish before it can be called still.
+    for (int i = 0; i < 6000; ++i) sim.step(world);
 
     // Holes: count air cells inside the pit that are walled in on all four sides
     // by water or stone, so a genuine bubble stands out from the free surface.
@@ -330,12 +339,15 @@ bool checkWaterSettlesStill() {
         }
     }
 
-    // Stillness: snapshot, run a stretch of ticks, and see if anything moved.
+    // Stillness: snapshot the *visible* liquid state - which cells hold enough
+    // liquid to see - run a stretch of ticks, and see if any of it moved. A cell
+    // whose mass shifts by a hundredth is not visible motion; the check is for
+    // the shimmering pool, which shows up as a cell crossing the visible line.
     std::vector<uint8_t> before(world.cellCount());
     for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
         for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
             before[static_cast<size_t>(y) * MAX_GRID_WIDTH + x] =
-                static_cast<uint8_t>(world.at(x, y));
+                world.mass(x, y) >= 0.5f ? 1 : 0;
         }
     }
     for (int i = 0; i < 60; ++i) sim.step(world);
@@ -343,12 +355,12 @@ bool checkWaterSettlesStill() {
     int moved = 0;
     for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
         for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
-            if (before[static_cast<size_t>(y) * MAX_GRID_WIDTH + x] !=
-                static_cast<uint8_t>(world.at(x, y))) ++moved;
+            const uint8_t now = world.mass(x, y) >= 0.5f ? 1 : 0;
+            if (before[static_cast<size_t>(y) * MAX_GRID_WIDTH + x] != now) ++moved;
         }
     }
 
-    const bool passed = bubbles == 0 && moved == 0 && world.count(Mat::Water) > 0;
+    const bool passed = bubbles == 0 && moved == 0 && world.totalMass(Mat::Water) > 0.0f;
     std::printf("water settles solid and still: %s (bubbles %d, cells moving over 60 ticks %d)\n",
                 passed ? "PASS" : "FAIL", bubbles, moved);
     return passed;
@@ -379,7 +391,7 @@ bool checkWaterSpreadsFlat() {
 
     auto topOf = [&](int x) {
         for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
-            if (world.at(x, y) == Mat::Water) return y;
+            if (world.mass(x, y) >= 0.5f) return y;
         }
         return MAX_GRID_HEIGHT;
     };
@@ -396,13 +408,13 @@ bool checkWaterSpreadsFlat() {
         if (t >= MAX_GRID_HEIGHT) continue;
         ++columns;
         int depth = 0;
-        for (int y = t; y < 240 && world.at(x, y) == Mat::Water; ++y) ++depth;
+        for (int y = t; y < 240 && world.mass(x, y) >= 0.5f; ++y) ++depth;
         totalDepth += depth;
         if (depth > tallest) tallest = depth;
     }
     const int meanDepth = columns > 0 ? static_cast<int>(totalDepth / columns) : 0;
 
-    const bool passed = columns >= 25 && tallest <= meanDepth + 3 && world.count(Mat::Water) > 0;
+    const bool passed = columns >= 25 && tallest <= meanDepth + 3 && world.totalMass(Mat::Water) > 0.0f;
     std::printf("water spreads to a shallow heap: %s (columns with water %d, tallest %d, mean %d)\n",
                 passed ? "PASS" : "FAIL", columns, tallest, meanDepth);
     return passed;
@@ -431,7 +443,7 @@ bool checkBigLakeLevelsAndSettles() {
         const int top = (x < W / 3) ? 200 : 224;
         for (int y = top; y < 240; ++y) world.set(x, y, Mat::Water);
     }
-    const int startCells = world.count(Mat::Water);
+    const float startMass = world.totalMass(Mat::Water);
 
     Simulation sim(world);
     for (int i = 0; i < 600; ++i) sim.step(world);
@@ -440,7 +452,7 @@ bool checkBigLakeLevelsAndSettles() {
     int leftmost = W, rightmost = -1;
     for (int x = 0; x < W; ++x) {
         for (int y = 0; y < 240; ++y) {
-            if (world.at(x, y) == Mat::Water) {
+            if (world.mass(x, y) >= 0.5f) {
                 if (x < leftmost) leftmost = x;
                 if (x > rightmost) rightmost = x;
                 break;
@@ -452,7 +464,7 @@ bool checkBigLakeLevelsAndSettles() {
     // neighbours - a spike, as opposed to the broad mound the rules produce.
     auto topOf = [&](int x) {
         for (int y = 0; y < 240; ++y) {
-            if (world.at(x, y) == Mat::Water) return y;
+            if (world.mass(x, y) >= 0.5f) return y;
         }
         return 240;
     };
@@ -462,7 +474,10 @@ bool checkBigLakeLevelsAndSettles() {
         if (topOf(x) + 3 < topOf(x - 1) && topOf(x) + 3 < topOf(x + 1)) ++spikes;
     }
 
-    // Not churning: over 60 ticks only a small fraction of the water moves.
+    // Not churning: over 60 ticks only a small fraction of the water moves. A
+    // mass transfer counts as movement only when it changes which material is in
+    // a cell - the tiny equalising flows that continue at the surface are not
+    // churn, they are the pool holding its level.
     std::vector<uint8_t> before(world.cellCount());
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
@@ -478,12 +493,13 @@ bool checkBigLakeLevelsAndSettles() {
         }
     }
 
-    const int conserved = world.count(Mat::Water) - startCells;
+    const float endMass = world.totalMass(Mat::Water);
+    const bool conserved = std::abs(endMass - startMass) <= startMass * 0.01f;
     const bool spread = leftmost <= 4 && rightmost >= W - 5;
-    const bool settled = moved <= startCells / 10;
-    const bool passed = spread && settled && conserved == 0 && spikes == 0;
-    std::printf("a big lake spreads and settles: %s (reaches %d..%d, moving %d, spikes %d, cells %+d)\n",
-                passed ? "PASS" : "FAIL", leftmost, rightmost, moved, spikes, conserved);
+    const bool settled = moved <= static_cast<int>(startMass) / 10;
+    const bool passed = spread && settled && conserved && spikes == 0;
+    std::printf("a big lake spreads and settles: %s (reaches %d..%d, moving %d, spikes %d, mass %+.0f)\n",
+                passed ? "PASS" : "FAIL", leftmost, rightmost, moved, spikes, endMass - startMass);
     return passed;
 }
 
@@ -780,7 +796,7 @@ bool checkWaterStopsPulsing() {
         for (int x = 0; x < W; ++x) {
             out[x] = -1;
             for (int y = 0; y < H; ++y) {
-                if (world.at(x, y) == Mat::Water) { out[x] = y; break; }
+                if (world.mass(x, y) >= 0.5f) { out[x] = y; break; }
             }
         }
     };

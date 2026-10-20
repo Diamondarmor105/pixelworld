@@ -30,6 +30,15 @@ void Renderer::updateImage(const World& world) {
                 color = ((x + y + life) & 1) ? kFireHot : kFireCool;
             } else {
                 color = materialInfo(m).color;
+                // A liquid cell holds a fraction of a unit of liquid, so draw a
+                // partly filled cell lighter. A shallow film then reads as thin
+                // water rather than as a solid block, which is what makes the
+                // surface of a pool look crisp.
+                if (materialInfo(m).flows) {
+                    const float mass = world.mass(x, y);
+                    const float full = mass > 1.0f ? 1.0f : mass;
+                    color.a = static_cast<unsigned char>(60 + 195 * full);
+                }
             }
             pixels[static_cast<size_t>(y) * world.width() + x] = color;
         }

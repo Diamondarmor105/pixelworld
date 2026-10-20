@@ -27,32 +27,25 @@ struct SimRect {
 //   * Fire spreads to neighbouring flammable cells (see their `igniteChance`),
 //     burns for as long as their `burnTime`, then leaves `burnsInto` behind.
 //   * A loose solid tries straight down, then down-left, then down-right.
-//   * A liquid tries straight down, then down-diagonal, then sideways. On top of
-//     that, a liquid cell at the top of its column may step sideways into the
-//     liquid of a neighbouring column when that column's surface is at least
-//     two rows lower. That is the one move the plain rules lack, and it is what
-//     lets a slope cascade instead of standing forever; without it, water
-//     poured into a stepped basin settles as a 45-degree staircase that never
-//     changes again. The two-row allowance is what keeps a settled pool still:
-//     a pool's own surface ruffles by about a row, and treating a one-row
-//     difference as a slope made every surface cell hop between columns.
-//     All: there is no pressure, no depth measurement and no periodic tidying
-//     pass. Water therefore behaves like a very slippery granular material - it
-//     runs downhill and spreads out, but a thin film on a flat floor may still
-//     stop short of the far wall rather than creeping all the way.
-//   * A material can move into empty space, or swap with a lighter loose solid
-//     or liquid, so sand sinks through water and burning oil keeps burning as
-//     it flows. A liquid that cannot fall or step aside shoves a lighter grain
-//     out of the way instead.
+//   * A liquid is a continuous quantity, not a whole cell: every liquid cell
+//     holds a mass between 0 and 1 (a little above 1 when compressed). It moves
+//     by TRANSFERRING a fraction of a unit, never by swapping places. It pours
+//     down into a cell with room, and it equalises sideways by giving half the
+//     difference to a less filled neighbour.
+//
+//     This is what makes a pool level and stay level. Whole-cell liquids could
+//     not express a flat surface: two equally full neighbours can only trade
+//     places, which they do forever, so the surface jitters and a slope freezes.
+//     With mass, equal neighbours have a difference of zero and therefore do
+//     nothing at all, and any inequality flows itself flat. There is no pressure
+//     scan, no depth measurement, no minimum drop and no periodic tidying pass.
+//   * A material can move into empty space, or swap with a lighter loose solid,
+//     so sand sinks through water and burning oil keeps burning as it flows.
 //   * Anything that moved is marked for the rest of the tick, so nothing moves
-//     twice in one frame.
-//   * A tick runs the rules in two sweeps: bottom-up (which does the falling)
-//     then top-down (which spreads material sideways into the gaps the first
-//     sweep left). The scan order is fixed, and each cell instead has a standing
-//     left/right preference of its own taken from its coordinates, so material
-//     does not drift consistently to one side. Alternating the scan direction
-//     each tick instead of the preference is what used to make a pool surface
-//     flicker: the edge settled into a different shape on alternate ticks.
+//     twice in one frame. Liquids do not use that mark: a mass transfer is not a
+//     move, and a cell may legitimately both receive and give in one tick.
+//   * Solids run first, bottom-up, then liquids, bottom-up. Liquids need only
+//     one pass because a transfer is symmetric and converges.
 class Simulation {
 public:
     explicit Simulation(const World& world);
@@ -68,8 +61,5 @@ public:
 
 private:
     std::vector<uint8_t> moved_;
-    // Rows the falling sweep moved something in. The sideways sweep only
-    // revisits these, so a still or empty scene does not pay for a second pass.
-    std::vector<uint8_t> dirtyRows_;
     int frame_ = 0;
 };

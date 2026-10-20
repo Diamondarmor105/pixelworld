@@ -745,6 +745,53 @@ bool checkHeavyHeapStopsPlayer() {
     return passed;
 }
 
+// Self-test: a settled pool must not pulse. This was a real bug: the falling
+// sweep reversed its scan direction every tick, and because the rule allows a
+// cell to move down-diagonal, the pool settled into one shape on one tick and a
+// different shape on the next - the outline visibly flip-flopped, which the eye
+// blends into a flickering, semi-transparent surface.
+//
+// The check watches the middle of a wide shallow pool (clear of the thin ragged
+// fringe at its ends and of the wall it spreads against) for 200 ticks. Measured
+// on this scene, the middle moved 0 cells with the fixed rules and 5788 with the
+// old ones, so the two are far apart and the check is not a close call.
+bool checkWaterStopsPulsing() {
+    const int W = 480, H = MAX_GRID_HEIGHT;
+    World world(W, H);
+    world.fill(Mat::Air);
+    for (int x = 0; x < W; ++x) {
+        for (int y = 200; y < H; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 40; x < 440; ++x) {
+        for (int y = 186; y < 200; ++y) world.set(x, y, Mat::Water);
+    }
+
+    Simulation sim(world);
+    for (int i = 0; i < 600; ++i) sim.step(world);   // settle
+
+    const int x0 = 60, x1 = 340, y0 = 188, y1 = 195;
+    int movedCells = 0;
+    for (int t = 0; t < 200; ++t) {
+        std::vector<uint8_t> before(world.cellCount());
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                before[static_cast<size_t>(y) * W + x] = static_cast<uint8_t>(world.at(x, y));
+            }
+        }
+        sim.step(world);
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                if (before[static_cast<size_t>(y) * W + x] != static_cast<uint8_t>(world.at(x, y))) ++movedCells;
+            }
+        }
+    }
+
+    const bool passed = movedCells == 0;
+    std::printf("a settled pool does not pulse: %s (cells moved in the middle of the pool over 200 ticks: %d)\n",
+                passed ? "PASS" : "FAIL", movedCells);
+    return passed;
+}
+
 // Self-test: a scene that has finished settling must stay completely still when
 // it is simulated the way the GAME simulates it - one camera-sized region at a
 // time rather than the whole grid - and it must stay still as that region pans
@@ -853,6 +900,7 @@ int runSelfTest() {
     if (!checkWaterSettlesStill()) passed = false;
     if (!checkWaterSpreadsFlat()) passed = false;
     if (!checkBigLakeLevelsAndSettles()) passed = false;
+    if (!checkWaterStopsPulsing()) passed = false;
     if (!checkSettledSceneStaysStill()) passed = false;
     if (!checkFireSpreads()) passed = false;
     if (!checkLavaWater()) passed = false;

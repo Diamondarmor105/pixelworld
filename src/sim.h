@@ -41,8 +41,11 @@ struct SimRect {
 //     twice in one frame.
 //   * A tick runs the rules in two sweeps: bottom-up (which does the falling)
 //     then top-down (which spreads material sideways into the gaps the first
-//     sweep left). The horizontal scan direction alternates each tick, so
-//     material does not drift consistently to one side.
+//     sweep left). The scan order is fixed, and each cell instead has a standing
+//     left/right preference of its own taken from its coordinates, so material
+//     does not drift consistently to one side. Alternating the scan direction
+//     each tick instead of the preference is what used to make a pool surface
+//     flicker: the edge settled into a different shape on alternate ticks.
 class Simulation {
 public:
     explicit Simulation(const World& world);

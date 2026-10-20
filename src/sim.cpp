@@ -375,35 +375,60 @@ void Simulation::step(World& world, const SimRect& region) {
     // something in. A still pool or an empty sky has nothing to spread, and
     // walking every cell again would double the tick cost for no effect; on a
     // settled scene the second sweep is now nearly free.
-    const int dir = (frame_ % 2 == 0) ? 1 : -1;
+    //
+    // Which side each cell tries first is a separate matter.
+    //
+    // This used to be one value for the whole grid, flipped every tick. That
+    // kept the left/right bias balanced overall, but it did so in lockstep, and
+    // the flip had a second effect that was worse: because the sweep walks in
+    // the same direction it prefers, reversing it every tick made a pool edge
+    // settle into a *different* shape on alternate ticks. Measured on the edge
+    // of a wide shallow pool, the falling sweep alone changed
+    //
+    //     .....WWWWWW      on one tick, to
+    //     ....W..WWWW      on the next, and back again, forever.
+    //
+    // Both shapes are genuinely settled for the scan order that produced them;
+    // they simply disagree. On screen the edge of the pool therefore pulses
+    // between two outlines, which the eye blends into a flickering,
+    // semi-transparent surface.
+    //
+    // So the scan order is now fixed, and the left/right bias is balanced the
+    // other way: each cell has a standing preference of its own, taken from its
+    // own coordinates. Neighbouring cells lean different ways, the preference
+    // does not change from tick to tick, and the grid as a whole stays balanced
+    // because the hash is even-handed. A cell that leans right still tries left
+    // when its first choice is blocked, so nothing is unreachable.
+    //
+    // A preference that *did* change every tick is not a fix: the cell then
+    // flip-flops with a different phase to its neighbour, which measured worse -
+    // ping-ponging fell from 90 cells to 60, but cells that wandered off and
+    // came back tripled, to 276. Stable is the whole point.
     if (dirtyRows_.size() != static_cast<size_t>(height)) dirtyRows_.assign(height, 0);
     std::fill(dirtyRows_.begin(), dirtyRows_.end(), 0);
 
+    // A cell's standing preference: stable per cell, even-handed across the
+    // grid, and independent of the tick so it does not reverse in sympathy with
+    // its neighbours.
+    auto lean = [&](int x, int y) {
+        return (noise(x, y, 0) & 1u) == 0u ? 1 : -1;
+    };
+
+    // Bottom-up, and always left-to-right, so a cell lands before the cell above
+    // it is asked and the result does not depend on which tick it is.
     for (int y = height - 1; y >= 0; --y) {
-        if (dir > 0) {
-            for (int x = 0; x < width; ++x) {
-                if (inRect(region, x, y) && updateCell(world, moved_, x, y, dir, false)) {
-                    dirtyRows_[y] = 1;
-                }
-            }
-        } else {
-            for (int x = width - 1; x >= 0; --x) {
-                if (inRect(region, x, y) && updateCell(world, moved_, x, y, dir, false)) {
-                    dirtyRows_[y] = 1;
-                }
-            }
+        for (int x = 0; x < width; ++x) {
+            if (!inRect(region, x, y)) continue;
+            if (updateCell(world, moved_, x, y, lean(x, y), false)) dirtyRows_[y] = 1;
         }
     }
+    // Top-down and right-to-left, the opposite way, so the sideways pass fills
+    // the holes the falling pass just made instead of chasing them.
     for (int y = 0; y < height; ++y) {
         if (!dirtyRows_[y]) continue;
-        if (dir > 0) {
-            for (int x = width - 1; x >= 0; --x) {
-                if (inRect(region, x, y)) updateCell(world, moved_, x, y, -dir, true);
-            }
-        } else {
-            for (int x = 0; x < width; ++x) {
-                if (inRect(region, x, y)) updateCell(world, moved_, x, y, -dir, true);
-            }
+        for (int x = width - 1; x >= 0; --x) {
+            if (!inRect(region, x, y)) continue;
+            updateCell(world, moved_, x, y, -lean(x, y), true);
         }
     }
 

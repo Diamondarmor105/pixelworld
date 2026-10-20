@@ -31,13 +31,26 @@ void Renderer::updateImage(const World& world) {
             } else {
                 color = materialInfo(m).color;
                 // A liquid cell holds a fraction of a unit of liquid, so draw a
-                // partly filled cell lighter. A shallow film then reads as thin
-                // water rather than as a solid block, which is what makes the
-                // surface of a pool look crisp.
+                // partly filled cell as a paler shade of the liquid rather than
+                // as a solid block - that is what makes a shallow film read as
+                // thin water and gives a pool surface a crisp edge.
+                //
+                // This must NOT be done by lowering the alpha: the image is
+                // uploaded as an opaque texture, so a low alpha is blended
+                // against black and the water comes out dark grey to black. The
+                // colour is mixed toward the air colour instead, and the alpha
+                // is left at 255.
                 if (materialInfo(m).flows) {
                     const float mass = world.mass(x, y);
-                    const float full = mass > 1.0f ? 1.0f : mass;
-                    color.a = static_cast<unsigned char>(60 + 195 * full);
+                    const float full = mass > 1.0f ? 1.0f : (mass < 0.0f ? 0.0f : mass);
+                    // Water starts as a pale version of its own colour and
+                    // thickens to the full colour as the cell fills.
+                    const Color air = materialInfo(Mat::Air).color;
+                    const float mix = 0.45f + 0.55f * full;
+                    color.r = static_cast<unsigned char>(air.r + (color.r - air.r) * mix);
+                    color.g = static_cast<unsigned char>(air.g + (color.g - air.g) * mix);
+                    color.b = static_cast<unsigned char>(air.b + (color.b - air.b) * mix);
+                    color.a = 255;
                 }
             }
             pixels[static_cast<size_t>(y) * world.width() + x] = color;

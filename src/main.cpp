@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <vector>
 
 #include "camera.h"
 #include "generation.h"
@@ -292,6 +293,65 @@ bool checkWaterSpreads() {
     return passed;
 }
 
+// Self-test: a settled pool of water must be solid and still — no enclosed air
+// pockets left inside it, and not a single cell moving once it has levelled
+// out. Both were real bugs: the pool used to hold a scattering of bubbles that
+// shuffled around forever, which shimmered on screen.
+bool checkWaterSettlesStill() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    world.fill(Mat::Air);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 230; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    // A stone-walled pit, with water poured into its left half.
+    for (int x = 190; x <= 233; ++x) {
+        for (int y = 210; y < 230; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 200; x <= 223; ++x) {
+        for (int y = 210; y < 230; ++y) world.set(x, y, Mat::Air);
+    }
+    for (int x = 200; x <= 211; ++x) {
+        for (int y = 180; y <= 205; ++y) world.set(x, y, Mat::Water);
+    }
+
+    Simulation sim(world);
+    for (int i = 0; i < 1500; ++i) sim.step(world);
+
+    // Holes: count air cells inside the pit that are walled in on all four sides
+    // by water or stone, so a genuine bubble stands out from the free surface.
+    int bubbles = 0;
+    for (int y = 212; y < 229; ++y) {
+        for (int x = 201; x <= 222; ++x) {
+            if (world.at(x, y) != Mat::Air) continue;
+            if (world.at(x, y - 1) == Mat::Water && world.at(x, y + 1) == Mat::Water &&
+                world.at(x - 1, y) != Mat::Air && world.at(x + 1, y) != Mat::Air) ++bubbles;
+        }
+    }
+
+    // Stillness: snapshot, run a stretch of ticks, and see if anything moved.
+    std::vector<uint8_t> before(world.cellCount());
+    for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+            before[static_cast<size_t>(y) * MAX_GRID_WIDTH + x] =
+                static_cast<uint8_t>(world.at(x, y));
+        }
+    }
+    for (int i = 0; i < 60; ++i) sim.step(world);
+
+    int moved = 0;
+    for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+            if (before[static_cast<size_t>(y) * MAX_GRID_WIDTH + x] !=
+                static_cast<uint8_t>(world.at(x, y))) ++moved;
+        }
+    }
+
+    const bool passed = bubbles == 0 && moved == 0 && world.count(Mat::Water) > 0;
+    std::printf("water settles solid and still: %s (bubbles %d, cells moving over 60 ticks %d)\n",
+                passed ? "PASS" : "FAIL", bubbles, moved);
+    return passed;
+}
+
 // Self-test: fire must spread through a block of wood, burn it down and go out,
 // leaving ash behind.
 bool checkFireSpreads() {
@@ -519,6 +579,7 @@ int runSelfTest() {
 
     if (!checkSandSettles()) passed = false;
     if (!checkWaterSpreads()) passed = false;
+    if (!checkWaterSettlesStill()) passed = false;
     if (!checkFireSpreads()) passed = false;
     if (!checkLavaWater()) passed = false;
     if (!checkIceMelts()) passed = false;

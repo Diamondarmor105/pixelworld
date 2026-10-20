@@ -5,13 +5,17 @@
 namespace {
 
 // Can material `from` move into a cell holding `into`?
-// Empty space always yes; a lighter loose solid or liquid is pushed aside;
-// anything solid blocks.
+// Empty space always yes; a lighter liquid is pushed aside, and a liquid also
+// pushes through a lighter grain (so melt-water can percolate through snow);
+// but loose solids give way only to liquids. Grains stack in landing order -
+// falling sand settles on top of dirt instead of flipping the dirt up through
+// the pile - and anything solid blocks.
 bool canDisplace(Mat from, Mat into) {
     if (into == Mat::Air) return true;
     const MaterialInfo& target = materialInfo(into);
     if (!target.falls && !target.flows) return false;
-    return materialInfo(from).density > target.density;
+    if (materialInfo(from).density <= target.density) return false;
+    return target.flows || materialInfo(from).flows;
 }
 
 bool isOpen(const World& world, int x, int y) {
@@ -48,7 +52,11 @@ bool trySwap(World& world, std::vector<uint8_t>& moved, int x, int y, int tx, in
     world.setLife(x, y, lifeInto);
     world.setLife(tx, ty, lifeFrom);
 
-    markMoved(world, moved, x, y);
+    // Only the destination is flagged. The cell that moved cannot move again,
+    // but the gap it left is free to be filled straight away - by the cell
+    // above falling into it, in this same tick. Flagging the gap too is what
+    // once let holes survive a whole tick, shuttle around inside a pool of
+    // water and make it shimmer instead of settling.
     markMoved(world, moved, tx, ty);
     return true;
 }
@@ -280,6 +288,36 @@ bool flowTowardEmpty(World& world, std::vector<uint8_t>& moved, int x, int y, in
     return false;
 }
 
+// Pressured liquid shoves a lighter grain sideways instead of being stopped by
+// it. This is how melt-water works its way out of a snow bank: the pile looks
+// solid, but the water is heavier and pushes through.
+bool shoveGrain(World& world, std::vector<uint8_t>& moved, int x, int y, int dir) {
+    const int tx = x + dir;
+    if (!world.inBounds(tx, y)) return false;
+    const Mat target = world.at(tx, y);
+    if (target == Mat::Air) return false;                          // handled by flowTowardEmpty
+    if (materialInfo(target).flows) return false;                  // liquids sort out by density
+    if (!canDisplace(world.at(x, y), target)) return false;
+    return trySwap(world, moved, x, y, tx, y);
+}
+
+// A surface cell - nothing stacked on top, so no pressure. It may shuffle one
+// step sideways into an empty cell, but only if its own floor stays put: the
+// cell below it must hold liquid, and the cell below the destination must be
+// empty. In other words it can spill over an edge into air, and never hover a
+// cell higher afterwards. Strictly one-way, so a settled pool is perfectly
+// still - an earlier "fill the notch beside me" version let cells hop back and
+// forth one row up and down forever, which is exactly the shimmer this
+// replaced, and every pool rim shimmered.
+bool spillOverEdge(World& world, std::vector<uint8_t>& moved, int x, int y, int dir) {
+    const int tx = x + dir;
+    if (!world.inBounds(tx, y)) return false;
+    if (world.at(tx, y) != Mat::Air) return false;
+    if (!materialInfo(world.at(x, y + 1)).flows) return false;  // no floor of my own to step off
+    if (materialInfo(world.at(tx, y + 1)).flows) return false;  // over a notch, not an edge
+    return trySwap(world, moved, x, y, tx, y);
+}
+
 void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir, int frame) {
     const Mat self = world.at(x, y);
     const MaterialInfo& info = materialInfo(self);
@@ -299,10 +337,12 @@ void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
 
     // Liquids.
     //   1. Roll down a slope diagonally.
-    //   2. Spread sideways, but only as far as the weight of liquid stacked on
-    //      top of this cell allows. A surface cell has nothing pressing on it
-    //      and stays put, so a pool goes still once it is level; a deep cell
-    //      reaches further and pushes the water out to find its level.
+    //   2. Spread sideways. With liquid stacked on top, the pressure pushes as
+    //      far as the weight allows, even shoving a lighter grain aside on the
+    //      way. With nothing stacked on top there is no pressure, so the cell
+    //      only spills over a genuine edge into air beside it - always one row
+    //      downward, never back up - so a pool levels off and then goes
+    //      completely still instead of shimmering at its rim.
     const int side = (((x * 73856093) ^ (y * 19349663) ^ (frame * 83492791)) & 1) ? 1 : -1;
 
     if (trySwap(world, moved, x, y, x + side, y + 1)) return;
@@ -314,7 +354,15 @@ void updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
     if (pressure > 0) {
         if (flowTowardEmpty(world, moved, x, y, side, pressure)) return;
         if (flowTowardEmpty(world, moved, x, y, -side, pressure)) return;
+        if (spillOverEdge(world, moved, x, y, side)) return;
+        if (spillOverEdge(world, moved, x, y, -side)) return;
+        if (shoveGrain(world, moved, x, y, side)) return;
+        shoveGrain(world, moved, x, y, -side);
+        return;
     }
+
+    if (spillOverEdge(world, moved, x, y, side)) return;
+    spillOverEdge(world, moved, x, y, -side);
 }
 
 }  // namespace

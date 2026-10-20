@@ -135,8 +135,12 @@ bool Player::collides(const World& world) const {
 }
 
 void Player::draw(float offsetX, float offsetY, int scale) const {
-    const float px = offsetX + x_ * scale;
-    const float py = offsetY + y_ * scale;
+    // The sprite is placed from the same whole-cell origin as `collides`, not
+    // from the raw float position: `collides` tests the cells the player
+    // actually occupies, which start at floor(x_). Rounding the float instead
+    // draws the body up to a whole cell to the right of its own collision box.
+    const float px = offsetX + std::floor(x_) * scale;
+    const float py = offsetY + std::floor(y_) * scale;
 
     // A head and a body, so the block reads as a little person.
     DrawRectangle(static_cast<int>(px), static_cast<int>(py),

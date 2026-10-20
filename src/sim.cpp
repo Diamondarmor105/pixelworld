@@ -317,9 +317,16 @@ bool updateCell(World& world, std::vector<uint8_t>& moved, int x, int y, int dir
         } else {
             if (isOpen(world, x + first, y) && trySwap(world, moved, x, y, x + first, y + 1)) return true;
             if (isOpen(world, x + second, y) && trySwap(world, moved, x, y, x + second, y + 1)) return true;
-            return false;  // a loose solid has nowhere else to go
         }
     }
+
+    // A loose solid has no sideways step at all: it falls and rolls, and that is
+    // it. Only a liquid spreads along its row to find a level. This guard has to
+    // live outside the `spreadOnly` block above, because the second sweep skips
+    // that block - without this, a falling solid would reach the sideways step in
+    // the second sweep and shuffle one cell left or right on every tick, which is
+    // the surface grain that jitters in place.
+    if (!info.flows) return false;
 
     // 3. Sideways at the same row, so a pool spreads out instead of piling up.
     //

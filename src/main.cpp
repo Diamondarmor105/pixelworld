@@ -745,6 +745,84 @@ bool checkHeavyHeapStopsPlayer() {
     return passed;
 }
 
+// Self-test: a scene that has finished settling must stay completely still when
+// it is simulated the way the GAME simulates it - one camera-sized region at a
+// time rather than the whole grid - and it must stay still as that region pans
+// across it. This was a real bug with two causes, both of which made loose grain
+// far from the player twitch as you walked around:
+//   * The second (sideways) sweep skipped the branch that returns early for
+//     falling solids, so a grain with air beside it took a horizontal step on
+//     every tick - a surface grain that jittered left and right forever.
+//   * Nothing stopped a grain moving out of the simulated region into a frozen
+//     pixel, so the region edge behaved like a one-way door.
+// The check settles the scene with a full-grid simulation, then sweeps a
+// 480-wide window across it and counts loose solids that move anywhere. A
+// settled world must move none.
+bool checkSettledSceneStaysStill() {
+    const int W = 720, H = MAX_GRID_HEIGHT;   // wide enough to pan a real window
+    World world(W, H);
+    world.fill(Mat::Air);
+    for (int x = 0; x < W; ++x) {
+        for (int y = 230; y < H; ++y) world.set(x, y, Mat::Stone);
+    }
+    // A few loose piles and a slope for grain to settle on, so there is plenty of
+    // loose material for a bad rule to agitate.
+    for (int x = 60; x < 120; ++x) {
+        for (int y = 210; y < 230; ++y) world.set(x, y, Mat::Sand);
+    }
+    for (int x = 300; x < 360; ++x) {
+        for (int y = 214; y < 230; ++y) world.set(x, y, Mat::Gravel);
+    }
+    for (int x = 500; x < 560; ++x) {
+        for (int y = 216; y < 230; ++y) world.set(x, y, Mat::Snow);
+    }
+    for (int step = 0; step < 20; ++step) {
+        for (int x = 0; x < W; ++x) world.set(x, 240 - step, Mat::Stone);  // a descending step
+        if (240 - step >= 230) world.set(700, 240 - step, Mat::Air);
+    }
+
+    Simulation sim(world);
+    for (int i = 0; i < 3000; ++i) sim.step(world);   // settle the whole grid
+
+    // Snapshot, then pan a 480-wide window across the scene the way the camera
+    // does, stepping only the region each time.
+    std::vector<uint8_t> before(world.cellCount());
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            before[static_cast<size_t>(y) * W + x] = static_cast<uint8_t>(world.at(x, y));
+        }
+    }
+
+    const int VW = 480, MARGIN = SIM_MARGIN;
+    for (int viewX = 0; viewX + VW <= W; viewX += 2) {
+        const SimRect region{
+            std::max(0, viewX - MARGIN), 0,
+            std::min(W - 1, viewX + VW - 1 + MARGIN),
+            std::min(H - 1, MAX_GRID_HEIGHT - 1)};
+        sim.step(world, region);
+    }
+
+    // Count loose solids that moved at all over the whole sweep.
+    int movedLoose = 0;
+    int movedAny = 0;
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            const Mat b = static_cast<Mat>(before[static_cast<size_t>(y) * W + x]);
+            const Mat a = world.at(x, y);
+            if (b == a) continue;
+            ++movedAny;
+            const bool looseB = materialInfo(b).falls && !materialInfo(b).flows;
+            const bool looseA = materialInfo(a).falls && !materialInfo(a).flows;
+            if (looseB || looseA) ++movedLoose;
+        }
+    }
+
+    const bool passed = movedLoose == 0;
+    std::printf("a settled scene stays still under a panning region: %s (loose solids moved %d, any cells moved %d)\n",
+                passed ? "PASS" : "FAIL", movedLoose, movedAny);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -775,6 +853,7 @@ int runSelfTest() {
     if (!checkWaterSettlesStill()) passed = false;
     if (!checkWaterSpreadsFlat()) passed = false;
     if (!checkBigLakeLevelsAndSettles()) passed = false;
+    if (!checkSettledSceneStaysStill()) passed = false;
     if (!checkFireSpreads()) passed = false;
     if (!checkLavaWater()) passed = false;
     if (!checkIceMelts()) passed = false;

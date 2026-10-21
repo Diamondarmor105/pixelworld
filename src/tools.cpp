@@ -122,7 +122,7 @@ void Tools::detonate(World& world, Projectile& p) {
 
     if (p.tool == Tool::Dynamite) {
         // Check if underwater.
-        int radius = 5 + (rand() % 4); // 5-8
+        int radius = 8 + (rand() % 4); // 8-11 (increased power)
         int r2 = radius * radius;
         int waterCount = 0, total = 0;
         for (int y = cy - radius; y <= cy + radius; ++y) {
@@ -139,7 +139,6 @@ void Tools::detonate(World& world, Projectile& p) {
         int effectiveRadius = underwater ? radius / 2 : radius;
         int er2 = effectiveRadius * effectiveRadius;
 
-        // Collect loose materials to launch.
         for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
             for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
                 if (!world.inBounds(x, y)) continue;
@@ -148,13 +147,33 @@ void Tools::detonate(World& world, Projectile& p) {
                 if (dist > effectiveRadius) continue;
                 Mat m = world.at(x, y);
                 if (m == Mat::Bedrock) continue;
+                bool isLiquid = materialInfo(m).flows || materialInfo(m).rises;
                 // Energy decreases with distance: full at center, zero at edge.
                 float energy = 1.0f - (dist / (float)effectiveRadius);
                 if (energy < 0) energy = 0;
                 int resist = materialInfo(m).blastResistance;
-                // Destroy if energy exceeds blast resistance (scaled).
-                if ((int)(energy * 255.0f) > resist) {
-                    world.set(x, y, Mat::Air);
+                if (isLiquid) {
+                    // Don't destroy liquids; push them outward.
+                    // Move the liquid cell to the edge of the blast.
+                    float nx = (dist < 0.1f) ? 0 : dx / dist;
+                    float ny = (dist < 0.1f) ? -1 : dy / dist;
+                    int tx = cx + (int)(nx * (effectiveRadius + 2));
+                    int ty = cy + (int)(ny * (effectiveRadius + 2));
+                    if (world.inBounds(tx, ty) && world.at(tx, ty) == Mat::Air) {
+                        float mass = world.mass(x, y);
+                        world.setMass(tx, ty, m, mass > 0 ? mass : 1.0f);
+                        world.set(x, y, Mat::Air);
+                    } else {
+                        // If can't push, just set to air (liquid destroyed as last resort).
+                        if ((int)(energy * 255.0f) > resist) {
+                            world.set(x, y, Mat::Air);
+                        }
+                    }
+                } else {
+                    // Solids: destroy if energy exceeds blast resistance.
+                    if ((int)(energy * 255.0f) > resist) {
+                        world.set(x, y, Mat::Air);
+                    }
                 }
             }
         }

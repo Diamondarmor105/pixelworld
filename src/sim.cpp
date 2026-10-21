@@ -286,8 +286,7 @@ void applyReactions(World& world, const SimRect& region, int frame) {
 // column is empty there. Used only by the friction gate, to compare the height of
 // two neighbouring pile surfaces.
 int surfaceRow(const World& world, int x, int from) {
-    (void)from;
-    for (int y = 0; y < world.height(); ++y) {
+    for (int y = from; y < world.height(); ++y) {
         if (world.at(x, y) != Mat::Air) return y;
     }
     return 1 << 30;
@@ -492,6 +491,7 @@ void flowMass(World& world, int x, int y, float& budget) {
             if (!world.inBounds(nx, ny)) continue;
             const Mat there = world.at(nx, ny);
             const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
+            if (there != Mat::Air && there != self) continue;
             if (there != Mat::Air && !mobileThere) continue;
             const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
             world.setMass(nx, ny, mobileThere ? there : self, current + remain);

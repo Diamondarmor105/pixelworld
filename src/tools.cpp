@@ -87,7 +87,7 @@ void Tools::tick(World& world, Simulation& sim) {
         if (p.tool == Tool::SparkWand) {
             if (here != Mat::Air && !materialInfo(here).flows && !materialInfo(here).rises) {
                 // Spawn fire cluster with random size/shape.
-                int r = 1 + (rand() % 3);
+                int r = 2 + (rand() % 3);
                 for (int dy = -r; dy <= r; ++dy)
                     for (int dx = -r; dx <= r; ++dx) {
                         if (dx * dx + dy * dy > r * r + (rand() % 4)) continue;

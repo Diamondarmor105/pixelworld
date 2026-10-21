@@ -337,8 +337,7 @@ int surfaceRow(const World& world, int x, int from) {
 // Diagonals below are tried first, then the sides: a crumb prefers to tumble
 // downhill, and only then to slide sideways. A cell that can take it is any
 // mobile material (masses add) or air (it becomes material).
-bool handOffCrumb(World& world, int x, int y, Mat self) {
-    const float amount = world.massAt(x, y);
+bool handOffCrumb(World& world, int x, int y, Mat self, float amount) {
     if (amount <= 0.0f) return false;
     static const int dx[4] = {-1, +1, -1, +1};
     static const int dy[4] = {+1, +1, 0, 0};
@@ -403,7 +402,7 @@ void flowMass(World& world, int x, int y, float& budget) {
     }
 
     if (myMass <= kMassEmpty) {
-        handOffCrumb(world, x, y, self);
+        handOffCrumb(world, x, y, self, myMass);
         return;
     }
 

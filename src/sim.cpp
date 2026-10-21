@@ -338,14 +338,21 @@ int surfaceRow(const World& world, int x, int from) {
 // mobile material (masses add) or air (it becomes material).
 bool handOffCrumb(World& world, int x, int y, Mat self, float amount) {
     if (amount <= 0.0f) return false;
-    static const int dx[4] = {-1, +1, -1, +1};
-    static const int dy[4] = {+1, +1, 0, 0};
+    const MaterialInfo& info = materialInfo(self);
+    bool rises = info.rises;
+    // Diagonals first (downhill), then sides. For gases, "downhill" is up.
+    static const int dxDown[4] = {-1, +1, -1, +1};
+    static const int dyDown[4] = {+1, +1, 0, 0};
+    static const int dxUp[4] = {-1, +1, -1, +1};
+    static const int dyUp[4] = {-1, -1, 0, 0};
+    const int* dx = rises ? dxUp : dxDown;
+    const int* dy = rises ? dyUp : dyDown;
     for (int i = 0; i < 4; ++i) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
-        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
+        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
         if (there != Mat::Air && !mobileThere) continue;
         const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
         world.setMass(nx, ny, mobileThere ? there : self, current + amount);
@@ -383,16 +390,15 @@ void flowMass(World& world, int x, int y, float& budget) {
         const bool alongRises = materialInfo(along).rises && (along == self);
         const bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
         if (alongTakes) {
-            const float alongMass = (alongFlows || alongFalls || alongRises) ? world.massAt(x, gy) : 0.0f;
-            const float room = 1.0f - alongMass;
+            const float alongLive = (alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f;
+            const float room = 1.0f - alongLive;
             if (room > 0.0f) {
                 float flow = std::min(myMass, room);
                 if (myMass - flow < kMassEmpty) flow = myMass;
                 if (flow > kFlowMin) {
                     const Mat into = (alongFlows || alongFalls || alongRises) ? along : self;
-                    const float alongNow = (alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f;
                     world.setMass(x, y, self, world.mass(x, y) - flow);
-                    world.setMass(x, gy, into, alongNow + flow);
+                    world.setMass(x, gy, into, alongLive + flow);
                     budget -= flow;
                     return;
                 }

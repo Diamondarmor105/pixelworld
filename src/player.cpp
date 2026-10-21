@@ -38,7 +38,7 @@ constexpr int PUSH_FORCE = 1200;
 // are something you wade through and sink into rather than stand on. Everything
 // else stops you - unless it is loose enough to shove (see pushLoose).
 bool blocksPlayer(Mat m) {
-    if (m == Mat::Air || m == Mat::Fire || m == Mat::Foliage) return false;
+    if (m == Mat::Air || m == Mat::Fire || m == Mat::Smoke || m == Mat::Foliage) return false;
     return !materialInfo(m).flows;
 }
 

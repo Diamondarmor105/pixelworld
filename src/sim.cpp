@@ -286,7 +286,8 @@ void applyReactions(World& world, const SimRect& region, int frame) {
 // column is empty there. Used only by the friction gate, to compare the height of
 // two neighbouring pile surfaces.
 int surfaceRow(const World& world, int x, int from) {
-    for (int y = from; y < world.height(); ++y) {
+    (void)from;
+    for (int y = 0; y < world.height(); ++y) {
         if (world.at(x, y) != Mat::Air) return y;
     }
     return 1 << 30;
@@ -385,7 +386,7 @@ void flowMass(World& world, int x, int y, float& budget) {
     const int gy = y + gDir;
     if (gy >= 0 && gy < world.height()) {
         const Mat along = world.at(x, gy);
-        const bool alongFlows = materialInfo(along).flows;
+        const bool alongFlows = materialInfo(along).flows && (along == self || along == Mat::Air);
         const bool alongFalls = materialInfo(along).falls && (along == self);
         const bool alongRises = materialInfo(along).rises && (along == self);
         const bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
@@ -438,6 +439,11 @@ void flowMass(World& world, int x, int y, float& budget) {
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
         if (there != Mat::Air && !materialInfo(there).flows && !materialInfo(there).falls && !materialInfo(there).rises) continue;
+        // Don't let different liquid/gas types blend into each other.
+        if (there != Mat::Air && materialInfo(there).flows && there != self) continue;
+        if (there != Mat::Air && materialInfo(there).rises && there != self) continue;
+        // Don't let different solid types blend into each other.
+        if (there != Mat::Air && materialInfo(there).falls && there != self) continue;
 
         if (info.falls) {
             const int drop = surfaceRow(world, nx, ny) - surfaceRow(world, x, y);
@@ -493,7 +499,7 @@ void flowMass(World& world, int x, int y, float& budget) {
             break;
         }
         if (remain > 0.0f) {
-            world.setMass(x, y, self, world.mass(x, y));
+            world.setMass(x, y, self, remain);
             return;
         }
     }

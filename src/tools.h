@@ -1,5 +1,6 @@
 #pragma once
 
+#include "blast.h"
 #include "sim.h"
 
 #include <vector>
@@ -33,17 +34,16 @@ public:
 
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
 
-    static const char* name(Tool t);
+    // The explosions that went off on the last tick, so the game can hurt the
+    // player if they were standing too close to one.
+    const std::vector<BlastEvent>& blastEvents() const { return blastEvents_; }
 
-    float lastExplosionX() const { return lastExplosionX_; }
-    float lastExplosionY() const { return lastExplosionY_; }
-    float lastExplosionTimer() const { return lastExplosionTimer_; }
-    void clearExplosion() { lastExplosionTimer_ = 0; }
+    static const char* name(Tool t);
 
 private:
     void detonate(World& world, Projectile& p);
     Tool selected_ = Tool::SparkWand;
     std::vector<Projectile> projectiles_;
+    std::vector<BlastEvent> blastEvents_;
     int cooldown_ = 0;
-    float lastExplosionX_ = 0, lastExplosionY_ = 0, lastExplosionTimer_ = 0;
 };

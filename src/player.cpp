@@ -49,7 +49,22 @@ bool isLoose(Mat m) {
 
 }  // namespace
 
-Player::Player(float x, float y) : x_(x), y_(y) {}
+Player::Player(float x, float y) : x_(x), y_(y), health_(MAX_HEALTH) {}
+
+void Player::damage(float amount) {
+    if (amount <= 0.0f) return;
+    health_ -= amount;
+    if (health_ < 0.0f) health_ = 0.0f;
+}
+
+void Player::respawn(float x, float y) {
+    x_ = x;
+    y_ = y;
+    vx_ = 0.0f;
+    vy_ = 0.0f;
+    onGround_ = false;
+    health_ = MAX_HEALTH;
+}
 
 void Player::tick(World& world, float moveInput, bool jumpInput) {
     vx_ = moveInput * WALK_SPEED;

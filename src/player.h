@@ -13,6 +13,9 @@ public:
     static constexpr int WIDTH = 6;
     static constexpr int HEIGHT = 10;
 
+    // Health, from full down to nothing. At zero the player is dead.
+    static constexpr float MAX_HEALTH = 100.0f;
+
     // `x` is the left edge, `y` the top, in world cells.
     Player(float x, float y);
 
@@ -25,6 +28,15 @@ public:
     float x() const { return x_; }
     float y() const { return y_; }
     bool onGround() const { return onGround_; }
+
+    float health() const { return health_; }
+    bool dead() const { return health_ <= 0.0f; }
+
+    // Hurts the player. The health never goes below zero.
+    void damage(float amount);
+
+    // Puts the player back at the start of the world, whole again.
+    void respawn(float x, float y);
 
     void draw(float offsetX, float offsetY, int scale) const;
 
@@ -44,4 +56,5 @@ private:
     float vx_ = 0.0f;
     float vy_ = 0.0f;
     bool onGround_ = false;
+    float health_ = MAX_HEALTH;
 };

@@ -79,7 +79,7 @@ Build mode: fast
   Learner check: Run `make run`, press 1/2/3 to switch tools. Torch a tree with the spark wand, blow a hole in a hill with dynamite, carve into stone with the acid flask. Which tool feels best? Is the dynamite too strong or too weak, and does the acid carve fast enough?
   Commit: `Add spark wand, dynamite, and acid flask tools`
 
-- [ ] **8. Damage, death, and respawn**
+- [x] **8. Damage, death, and respawn**
   Becomes usable: Lava, fire, explosions and acid drain your health, the health bar shrinks visibly, and at zero you die and come back at the starting area with the world exactly as you left it.
   Why now: Complete the core journey's last step. It depends on tools (to damage yourself) and on the world (to respawn into a persistent place), so it can only be done now.
   PRD ref: `prd.md > The player, health, and death`, `prd.md > States and Boundaries`, `prd.md > Acceptance criteria`
@@ -112,6 +112,14 @@ Reflection:
 Activity mode:
 
 ## Revisions
+
+- Slice 8 — **health, damage, death and respawn, the last slice**:
+  - **The player has 100 points of health**, shown as a chunky bar in the top-left corner with a dark frame, next to the name of the tool being held. The bar is green, then gold, then red as it empties.
+  - **What hurts, and how much:** lava takes 45 health a second (so about two seconds to die), acid 30, fire 25. An explosion takes up to 60 in one hit, and less the further away you are standing — the damage falls off with the square of the distance, so at the very edge of a blast it is nothing. The damage is written as a rate per second and divided by sixty inside the tick, so it does not matter how often the game happens to be stepping.
+  - **Only the worst thing you are touching counts.** Standing in a big fire is not six times worse than standing in a small one, because the player is six cells wide and every cell would otherwise add its own share.
+  - **Dying is a pause, not a reset.** The screen says **YOU DIED** for a second and a half, and then the player is back at the beginning of the world with all their health. The world is **never** put back: the hole they blew is still a hole, the tree they burnt is still burnt, and the fire they lit is still burning. The world keeps being simulated while they are dead — that is what makes the respawn feel like a cost and not like a reload.
+  - **The explosions had to start telling on the world.** A blast did not know anyone could be standing in it, so the game now asks each explosion where it was and how far it reached, and hurts the player if they were too close. This is done in one place (`src/damage.h/.cpp`), so a new source of damage is one line in a table.
+  - **Three new self-tests** (38 in total, all passing): `lava drains health` (45 of 100 gone in one second), `death respawns at start with full health` (back at x=100, whole again), and `world damage survives respawn` (the hole is still a hole and the fire is still burning).
 
 - Slice 7 — **the three tools, and two bugs the tools had been hiding**:
   - **The acid flask had done nothing at all.** The rule that lets acid eat through rock was written once and then dropped by accident in a later rewrite of the reaction code (commit `3a88e55`) — the acid still appeared on screen, still flowed like a liquid, but never dissolved a thing. Nothing caught it, because the tools had no checks of their own. The rule is back, and it is stricter than before: the acid spends **two thirds of what it has left on every cell it dissolves**, so a thick pool bites deep and a thin film nibbles, and a splash of acid is used up and gone once it has carved its hole.

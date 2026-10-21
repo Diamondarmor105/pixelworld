@@ -430,8 +430,8 @@ void flowMass(World& world, int x, int y, float& budget) {
     }
 
     float offers[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    const int dx[4] = {-1, +1, -1, +1};
-    const int dy[4] = {0, 0, gDir, gDir};
+    static constexpr int dx[4] = {-1, +1, -1, +1};
+    int dy[4] = {0, 0, gDir, gDir};
     for (int i = 0; i < 4; ++i) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];

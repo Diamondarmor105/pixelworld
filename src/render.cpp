@@ -18,16 +18,18 @@ static Color lerpColor(Color c1, Color c2, float t) {
 }
 
 static Color getFireColor(uint8_t life, int x, int y) {
+    // Fire starts bright yellow and fades to deep red as it burns out.
+    float nl = static_cast<float>(life) / FIRE_LIFE;
+    if (nl > 1.0f) nl = 1.0f;
+    // Small spatial flicker for organic look.
     float flicker = static_cast<float>((x * 7 + y * 13 + life * 3) % 100) / 100.0f;
-    float normalizedLife = static_cast<float>(life) / FIRE_LIFE;
-    if (normalizedLife > 1.0f) normalizedLife = 1.0f;
-    float temp = normalizedLife * 0.7f + flicker * 0.3f;
+    float temp = nl * 0.85f + flicker * 0.15f;
 
-    Color deepRed{160, 20, 2, 255};
-    Color redOrange{220, 50, 5, 255};
-    Color orange{255, 100, 15, 255};
-    Color yellow{255, 180, 40, 255};
-    Color brightYellow{255, 240, 100, 255};
+    Color brightYellow{255, 240, 80, 255};
+    Color yellow{255, 180, 30, 255};
+    Color orange{255, 100, 10, 255};
+    Color redOrange{220, 40, 5, 255};
+    Color deepRed{140, 10, 2, 255};
 
     if (temp > 0.8f) {
         return lerpColor(yellow, brightYellow, (temp - 0.8f) / 0.2f);

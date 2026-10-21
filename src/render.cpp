@@ -27,7 +27,11 @@ void Renderer::updateImage(const World& world) {
 
             Color color;
             if (isBurning(m, life)) {
-                color = ((x + y + life) & 1) ? kFireHot : kFireCool;
+                // Fire flickers with more variation.
+                int flicker = (x * 7 + y * 13 + life * 31) % 5;
+                if (flicker < 2) color = kFireHot;
+                else if (flicker < 4) color = kFireCool;
+                else color = Color{255, 80, 20, 255}; // deep orange
             } else {
                 color = materialInfo(m).color;
                 if (materialInfo(m).flows || materialInfo(m).rises) {

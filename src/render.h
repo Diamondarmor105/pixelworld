@@ -1,8 +1,7 @@
 #pragma once
 
-#include "raylib.h"
+#include "world.h"
 
-#include "lighting.h"
 
 // Turns the material grid into pixels on screen.
 //
@@ -20,7 +19,7 @@ public:
 
     // Copies the colours of every cell into the image buffer, modulated by
     // per-cell light (0..1). `light` may be null to skip lighting.
-    void updateImage(const World& world, const Lighting* lighting = nullptr);
+    void updateImage(const World& world);
 
     // Uploads the image buffer (if needed) and draws the part of the world at
     // (worldX, worldY), `viewWidth` by `viewHeight` cells, stretched with

@@ -18,7 +18,7 @@ Renderer::~Renderer() {
     UnloadImage(image_);
 }
 
-void Renderer::updateImage(const World& world, const Lighting* lighting) {
+void Renderer::updateImage(const World& world) {
     Color* pixels = static_cast<Color*>(image_.data);
     for (int y = 0; y < world.height(); ++y) {
         for (int x = 0; x < world.width(); ++x) {
@@ -40,16 +40,6 @@ void Renderer::updateImage(const World& world, const Lighting* lighting) {
                     color.b = static_cast<unsigned char>(air.b + (color.b - air.b) * mix);
                     color.a = 255;
                 }
-            }
-
-            if (lighting) {
-                float L = lighting->at(x, y);
-                if (L < 0.0f) L = 0.0f;
-                if (L > 1.0f) L = 1.0f;
-                float factor = 0.15f + 0.85f * L;
-                color.r = static_cast<unsigned char>(color.r * factor * lighting->tintR(x, y));
-                color.g = static_cast<unsigned char>(color.g * factor * lighting->tintG(x, y));
-                color.b = static_cast<unsigned char>(color.b * factor * lighting->tintB(x, y));
             }
 
             pixels[static_cast<size_t>(y) * world.width() + x] = color;

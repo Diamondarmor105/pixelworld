@@ -58,9 +58,11 @@ void Tools::tick(World& world, Simulation& sim) {
     for (auto& p : projectiles_) {
         if (p.done) continue;
 
-        // Gravity for thrown objects.
+        // Gravity for thrown objects with air resistance.
         if (p.tool != Tool::SparkWand) {
             p.vy += 0.05f;
+            p.vx *= 0.995f;
+            p.vy *= 0.995f;
         }
 
         p.x += p.vx;
@@ -77,15 +79,17 @@ void Tools::tick(World& world, Simulation& sim) {
         // Spark wand: stop on solid, spawn fire.
         if (p.tool == Tool::SparkWand) {
             if (here != Mat::Air && !materialInfo(here).flows && !materialInfo(here).rises) {
-                // Spawn fire cluster.
-                for (int dy = -2; dy <= 2; ++dy)
-                    for (int dx = -2; dx <= 2; ++dx) {
+                // Spawn fire cluster with random size/shape.
+                int r = 1 + (rand() % 3);
+                for (int dy = -r; dy <= r; ++dy)
+                    for (int dx = -r; dx <= r; ++dx) {
+                        if (dx * dx + dy * dy > r * r + (rand() % 4)) continue;
                         int fx = ix + dx, fy = iy + dy;
                         if (!world.inBounds(fx, fy)) continue;
                         Mat m = world.at(fx, fy);
                         if (m == Mat::Air || materialInfo(m).flammable) {
                             world.set(fx, fy, Mat::Fire);
-                            world.setLife(fx, fy, FIRE_LIFE);
+                            world.setLife(fx, fy, FIRE_LIFE + (rand() % 4));
                         }
                     }
                 p.done = true;
@@ -111,18 +115,35 @@ void Tools::detonate(World& world, Projectile& p) {
     int cy = static_cast<int>(std::floor(p.y));
 
     if (p.tool == Tool::Dynamite) {
-        int radius = 7;
+        // Check if underwater.
+        int radius = 5 + (rand() % 4); // 5-8
         int r2 = radius * radius;
-        // Collect debris positions.
-        std::vector<std::pair<int,int>> debris;
+        int waterCount = 0, total = 0;
         for (int y = cy - radius; y <= cy + radius; ++y) {
             for (int x = cx - radius; x <= cx + radius; ++x) {
                 if (!world.inBounds(x, y)) continue;
                 int dx = x - cx, dy = y - cy;
                 if (dx * dx + dy * dy > r2) continue;
+                ++total;
+                if (world.at(x, y) == Mat::Water) ++waterCount;
+            }
+        }
+        bool underwater = (waterCount > total / 3);
+
+        int effectiveRadius = underwater ? radius / 2 : radius;
+        int er2 = effectiveRadius * effectiveRadius;
+
+        std::vector<std::pair<int,int>> debris;
+        for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
+            for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
+                if (!world.inBounds(x, y)) continue;
+                int dx = x - cx, dy = y - cy;
+                if (dx * dx + dy * dy > er2) continue;
                 Mat m = world.at(x, y);
                 if (m == Mat::Bedrock) continue;
-                if (materialInfo(m).blastResistance >= 200) continue;
+                int resist = materialInfo(m).blastResistance;
+                int chance = 255 - resist;
+                if (rand() % 256 > chance) continue;
                 if (m != Mat::Air && (materialInfo(m).falls || materialInfo(m).flows)) {
                     debris.push_back({x, y});
                 }
@@ -130,34 +151,46 @@ void Tools::detonate(World& world, Projectile& p) {
             }
         }
         // Fling debris outward.
+        int debrisCount = underwater ? 2 : 5;
         for (auto& d : debris) {
             int dx = d.first - cx, dy = d.second - cy;
             float dist = std::sqrt((float)(dx*dx + dy*dy));
             if (dist < 0.1f) dist = 0.1f;
-            float nx = dx / dist, ny = dy / dist;
-            int rx = cx + (int)(nx * (radius + 1));
-            int ry = cy + (int)(ny * (radius + 1));
-            if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-                world.setMass(rx, ry, Mat::Gravel, 0.6f);
-            }
-        }
-        // Light the rim.
-        for (int y = cy - radius - 1; y <= cy + radius + 1; ++y) {
-            for (int x = cx - radius - 1; x <= cx + radius + 1; ++x) {
-                if (!world.inBounds(x, y)) continue;
-                int dx = x - cx, dy = y - cy;
-                int d2 = dx * dx + dy * dy;
-                if (d2 < r2 || d2 > (radius + 2) * (radius + 2)) continue;
-                Mat m = world.at(x, y);
-                if (m == Mat::Air || materialInfo(m).flammable) {
-                    world.set(x, y, Mat::Fire);
-                    world.setLife(x, y, FIRE_LIFE);
+            for (int i = 0; i < debrisCount; ++i) {
+                float nx = dx / dist + ((rand() % 100) / 100.0f - 0.5f) * 0.6f;
+                float ny = dy / dist + ((rand() % 100) / 100.0f - 0.5f) * 0.6f;
+                int rx = cx + (int)(nx * (effectiveRadius + 1 + rand() % 4));
+                int ry = cy + (int)(ny * (effectiveRadius + 1 + rand() % 4));
+                if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
+                    world.setMass(rx, ry, Mat::Gravel, 0.3f + (rand() % 50) / 100.0f);
                 }
             }
         }
-        lastExplosionX_ = (float)cx;
-        lastExplosionY_ = (float)cy;
-        lastExplosionTimer_ = 1.0f;
+        // Light the rim (fire doesn't spread well underwater).
+        if (!underwater) {
+            for (int y = cy - effectiveRadius - 1; y <= cy + effectiveRadius + 1; ++y) {
+                for (int x = cx - effectiveRadius - 1; x <= cx + effectiveRadius + 1; ++x) {
+                    if (!world.inBounds(x, y)) continue;
+                    int dx = x - cx, dy = y - cy;
+                    int d2 = dx * dx + dy * dy;
+                    if (d2 < er2 || d2 > (effectiveRadius + 2) * (effectiveRadius + 2)) continue;
+                    Mat m = world.at(x, y);
+                    if (m == Mat::Air || materialInfo(m).flammable) {
+                        world.set(x, y, Mat::Fire);
+                        world.setLife(x, y, FIRE_LIFE + (rand() % 4));
+                    }
+                }
+            }
+        } else {
+            // Underwater: spawn bubbles (smoke rising).
+            for (int i = 0; i < 10; ++i) {
+                int rx = cx + (rand() % 7) - 3;
+                int ry = cy - (rand() % 5);
+                if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
+                    world.setMass(rx, ry, Mat::Smoke, 0.4f + (rand() % 40) / 100.0f);
+                }
+            }
+        }
     } else if (p.tool == Tool::AcidFlask) {
         // Splash acid in a pool.
         for (int dy = -2; dy <= 2; ++dy) {
@@ -165,9 +198,10 @@ void Tools::detonate(World& world, Projectile& p) {
                 int x = cx + dx, y = cy + dy;
                 if (!world.inBounds(x, y)) continue;
                 if (world.at(x, y) == Mat::Air) {
-                    world.setMass(x, y, Mat::Acid, 0.8f);
+                    world.setMass(x, y, Mat::Acid, 0.6f + (rand() % 40) / 100.0f);
                 }
             }
         }
     }
 }
+

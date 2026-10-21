@@ -7,6 +7,39 @@
 
 namespace {
 
+static Color lerpColor(Color c1, Color c2, float t) {
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return Color{
+        static_cast<unsigned char>(c1.r + (c2.r - c1.r) * t),
+        static_cast<unsigned char>(c1.g + (c2.g - c1.g) * t),
+        static_cast<unsigned char>(c1.b + (c2.b - c1.b) * t),
+        255
+    };
+}
+
+static Color getFireColor(uint8_t life, int x, int y) {
+    float flicker = static_cast<float>((x * 7 + y * 13 + life * 3) % 100) / 100.0f;
+    float normalizedLife = static_cast<float>(life) / FIRE_LIFE;
+    if (normalizedLife > 1.0f) normalizedLife = 1.0f;
+    float temp = normalizedLife * 0.7f + flicker * 0.3f;
+
+    Color deepRed{160, 20, 2, 255};
+    Color redOrange{220, 50, 5, 255};
+    Color orange{255, 100, 15, 255};
+    Color yellow{255, 180, 40, 255};
+    Color brightYellow{255, 240, 100, 255};
+
+    if (temp > 0.8f) {
+        return lerpColor(yellow, brightYellow, (temp - 0.8f) / 0.2f);
+    } else if (temp > 0.5f) {
+        return lerpColor(orange, yellow, (temp - 0.5f) / 0.3f);
+    } else if (temp > 0.2f) {
+        return lerpColor(redOrange, orange, (temp - 0.2f) / 0.3f);
+    } else {
+        return lerpColor(deepRed, redOrange, temp / 0.2f);
+    }
+}
+
 }  // namespace
 
 Renderer::Renderer(int width, int height) {
@@ -27,14 +60,7 @@ void Renderer::updateImage(const World& world) {
 
             Color color;
             if (isBurning(m, life)) {
-                // Fire color: bright yellow center -> orange -> red edges.
-                // Use life and position for flickering.
-                int t = (x * 3 + y * 7 + life * 11) % 7;
-                if (t == 0) color = Color{255, 240, 100, 255};       // bright yellow
-                else if (t <= 2) color = Color{255, 180, 40, 255};   // yellow-orange
-                else if (t <= 4) color = Color{255, 100, 15, 255};   // orange
-                else if (t <= 5) color = Color{220, 50, 5, 255};     // red-orange
-                else color = Color{160, 20, 2, 255};                 // deep red
+                color = getFireColor(life, x, y);
             } else {
                 color = materialInfo(m).color;
                 // Liquid/gas volumetric blending with ease-out.

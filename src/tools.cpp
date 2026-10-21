@@ -241,8 +241,12 @@ void Tools::detonate(World& world, Projectile& p) {
                     if (!hasLOS(cx, cy, x, y)) continue;
                     Mat m = world.at(x, y);
                     if (m == Mat::Air || materialInfo(m).flammable) {
+                        // Fire strength based on distance from center.
+                        float dist = std::sqrt((float)(dx*dx + dy*dy));
+                        float strength = 1.0f - (dist / (float)effectiveRadius);
+                        if (strength < 0.1f) strength = 0.1f;
                         world.set(x, y, Mat::Fire);
-                        world.setLife(x, y, FIRE_LIFE + (rand() % 5));
+                        world.setLife(x, y, (uint8_t)(FIRE_LIFE * strength * 2));
                     }
                 }
             }

@@ -61,26 +61,7 @@ void Player::tick(World& world, float moveInput, bool jumpInput) {
     // Buried: material has fallen onto them. Falling any further would only
     // push them deeper, so gravity is off and they climb steadily out instead,
     // in whatever direction is being held.
-    // Only trigger when truly surrounded (no air above to escape into).
     if (collides(world)) {
-        // Check if there's air above to escape.
-        const int left = static_cast<int>(std::floor(x_));
-        const int top = static_cast<int>(std::floor(y_));
-        bool canEscapeUp = false;
-        for (int cx = left; cx < left + WIDTH; ++cx) {
-            if (top - 1 >= 0 && !blocksPlayer(world.at(cx, top - 1))) {
-                canEscapeUp = true;
-                break;
-            }
-        }
-        if (canEscapeUp) {
-            // Not truly buried - treat as standing on a block.
-            onGround_ = true;
-            vy_ = 0.0f;
-            // Push up to escape the block.
-            moveAxis(world, -1.0f, false, true);
-            return;
-        }
         onGround_ = true;
         vy_ = 0.0f;
         moveAxis(world, vx_, true, true);

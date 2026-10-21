@@ -18,8 +18,9 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    // Copies the colours of every cell into the image buffer.
-    void updateImage(const World& world);
+    // Copies the colours of every cell into the image buffer, modulated by
+    // per-cell light (0..1). `light` may be null to skip lighting.
+    void updateImage(const World& world, const float* light = nullptr);
 
     // Uploads the image buffer (if needed) and draws the part of the world at
     // (worldX, worldY), `viewWidth` by `viewHeight` cells, stretched with

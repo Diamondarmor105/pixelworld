@@ -10,6 +10,8 @@
 #include "player.h"
 #include "raylib.h"
 #include "render.h"
+#include "lighting.h"
+#include "sim.h"
 #include "tools.h"
 #include "world.h"
 
@@ -116,6 +118,7 @@ int runGame(bool smoke) {
 
     Simulation sim(world);
     Renderer renderer(worldWidth, worldHeight);
+    Lighting lighting(worldWidth, worldHeight);
 
     GameCamera camera(viewport.gridWidth, viewport.gridHeight, PLAYER_START_X, 0.0f);
     Player player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
@@ -123,6 +126,8 @@ int runGame(bool smoke) {
     camera.clamp(world.width(), world.height());
 
     Tools tools;
+
+    float timeAccum = 0.0f;
 
     int frames = 0;
     while (!WindowShouldClose()) {
@@ -160,8 +165,11 @@ int runGame(bool smoke) {
 
         tools.tick(world, sim);
 
-        // Temporary debug brush: hold left mouse button to set fire (still available).
-        // (removed in favor of tools)
+        // Lightning: random flash.
+        bool lightning = (GetRandomValue(0, 1000) < 2);
+
+        timeAccum += 1.0f / 60.0f;
+        lighting.update(world, player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, timeAccum, lightning);
 
         // Only the pixels near the player get simulated. Everything else waits,
         // exactly as it was, until it comes into view.
@@ -172,7 +180,7 @@ int runGame(bool smoke) {
             std::min(world.height() - 1, camera.viewY() + viewport.gridHeight - 1 + SIM_MARGIN)};
         sim.step(world, region);
 
-        renderer.updateImage(world);
+        renderer.updateImage(world, lighting.data());
 
         const float offsetX = static_cast<float>(viewport.offsetX) -
                               static_cast<float>(camera.viewX() * viewport.scale);

@@ -2,12 +2,13 @@
 
 namespace {
 
-// Realistic flame palette: white core -> yellow -> orange -> red -> dark red.
-constexpr Color kFireCore{255, 250, 220, 255};
-constexpr Color kFireHot{255, 200, 60, 255};
-constexpr Color kFireMid{240, 110, 20, 255};
-constexpr Color kFireCool{200, 50, 8, 255};
-constexpr Color kFireDeep{120, 15, 2, 255};
+// Realistic flame palette based on temperature:
+// white-hot core -> bright yellow -> orange -> red -> dark red edges
+constexpr Color kFireCore{255, 255, 240, 255};   // ~1500C white
+constexpr Color kFireHot{255, 220, 80, 255};     // ~1200C yellow
+constexpr Color kFireMid{255, 140, 20, 255};     // ~900C orange
+constexpr Color kFireCool{230, 60, 8, 255};      // ~600C red-orange
+constexpr Color kFireDeep{160, 20, 3, 255};      // ~400C deep red
 
 }  // namespace
 
@@ -29,12 +30,13 @@ void Renderer::updateImage(const World& world) {
 
             Color color;
             if (isBurning(m, life)) {
-                // Fire flickers with more variation.
-                int flicker = (x * 7 + y * 13 + life * 31) % 6;
-                if (flicker < 1) color = kFireCore;
-                else if (flicker < 2) color = kFireHot;
-                else if (flicker < 3) color = kFireMid;
-                else if (flicker < 5) color = kFireCool;
+                // Flame gradient: core is white-hot, edges are deep red.
+                // Use life and position to create a flickering gradient.
+                int t = (x * 3 + y * 7 + life * 11) % 7;
+                if (t == 0) color = kFireCore;
+                else if (t <= 2) color = kFireHot;
+                else if (t <= 3) color = kFireMid;
+                else if (t <= 5) color = kFireCool;
                 else color = kFireDeep;
             } else {
                 color = materialInfo(m).color;

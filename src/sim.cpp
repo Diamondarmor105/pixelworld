@@ -188,19 +188,28 @@ void explode(World& world, int cx, int cy, int radius) {
         }
     }
 
-    const int ring = radius + 1;
-    const int ring2 = ring * ring;
-    for (int y = cy - ring; y <= cy + ring; ++y) {
-        for (int x = cx - ring; x <= cx + ring; ++x) {
+    // Fire at center and rim.
+    for (int y = cy - radius; y <= cy + radius; ++y) {
+        for (int x = cx - radius; x <= cx + radius; ++x) {
             if (!world.inBounds(x, y)) continue;
-            if (world.at(x, y) != Mat::Air) continue;
             const int dx = x - cx;
             const int dy = y - cy;
             const int d2 = dx * dx + dy * dy;
-            if (d2 <= r2 || d2 > ring2) continue;
-            if ((noise(x, y, 7) & 1u) == 0u) continue;  // a ragged edge, not a neat halo
-            world.set(x, y, Mat::Fire);
-            world.setLife(x, y, FIRE_LIFE);
+            if (d2 > r2) continue;
+            Mat m = world.at(x, y);
+            if (m == Mat::Air || materialInfo(m).flammable) {
+                world.set(x, y, Mat::Fire);
+                world.setLife(x, y, FIRE_LIFE);
+            }
+        }
+    }
+
+    // Spawn smoke.
+    for (int i = 0; i < 8; ++i) {
+        int rx = cx + (rand() % 5) - 2;
+        int ry = cy - (rand() % 4);
+        if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
+            world.setMass(rx, ry, Mat::Smoke, 0.4f + (rand() % 40) / 100.0f);
         }
     }
 }
@@ -264,12 +273,7 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
     if (info.flammable && hot == Mat::Lava) tryIgnite(world, hx, hy, frame);
 
     // Lava reaching sulfur crust blows a small crater and lights the rim.
-    if (cold == Mat::SulfurCrust && hot == Mat::Lava) {
-        // Center explosion on the lava (hot) position, not the sulfur.
-        const int ex = hotIsA ? x : nx;
-        const int ey = hotIsA ? y : ny;
-        explode(world, ex, ey, 5);
-    }
+    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy, 5);
 }
 
 // Every pair of touching cells that knows about each other gets a chance to

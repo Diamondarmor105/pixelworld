@@ -284,7 +284,7 @@ void Tools::detonate(World& world, Projectile& p) {
                 }
             }
         }
-    } else if (p.tool == Tool::AcidFlask) {    } else if (p.tool == Tool::AcidFlask) {
+    } else if (p.tool == Tool::AcidFlask) {
         // Splash acid in a pool.
         for (int dy = -2; dy <= 2; ++dy) {
             for (int dx = -4; dx <= 4; ++dx) {

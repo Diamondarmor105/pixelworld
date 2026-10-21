@@ -152,7 +152,7 @@ bool canReact(Mat m) {
     if (m == Mat::SulfurCrust) return true;
     if (m == Mat::Soil || m == Mat::PackedDirt) return true;
     const MaterialInfo& info = materialInfo(m);
-    return info.meltable || info.flammable || info.washedByWater;
+    return info.meltable || info.flammable || info.washedByWater || info.acidCorrodes;
 }
 
 // The PRD's "large volumes of lava near water -> obsidian instead of stone".
@@ -236,8 +236,24 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
         return;
     }
 
-    // Everything left is heat's doing. Lava acts like fire, only harsher.
-    const bool hotIsA = (a == Mat::Lava || a == Mat::Fire);
+    const bool hotIsA = (a == Mat::Lava || a == Mat::Fire || a == Mat::Acid);
+
+    // Acid corrodes materials that are vulnerable to it.
+    if (a == Mat::Acid || b == Mat::Acid) {
+        const int ax = (a == Mat::Acid) ? x : nx;
+        const int ay = (a == Mat::Acid) ? y : ny;
+        const int tx = (a == Mat::Acid) ? nx : x;
+        const int ty = (a == Mat::Acid) ? ny : y;
+        const Mat target = world.at(tx, ty);
+        if (materialInfo(target).acidCorrodes) {
+            world.set(tx, ty, Mat::Air);
+            // Acid spreads into the gap.
+            if (world.at(ax, ay) == Mat::Acid) {
+                // consume a bit of acid
+            }
+            return;
+        }
+    }
     if (!hotIsA && b != Mat::Lava && b != Mat::Fire) return;
     const Mat hot = hotIsA ? a : b;
     const int hx = hotIsA ? nx : x;

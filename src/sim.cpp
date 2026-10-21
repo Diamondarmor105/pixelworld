@@ -67,11 +67,12 @@ void tryIgnite(World& world, int x, int y, int frame) {
 // of leaving isolated unburned pixels.
 void spreadFire(World& world, int x, int y, int frame, bool includeDiagonals) {
     (void)includeDiagonals;
-    // Fire spreads only to the four nearest (cardinal) neighbors.
-    tryIgnite(world, x + 1, y, frame);
-    tryIgnite(world, x - 1, y, frame);
-    tryIgnite(world, x, y + 1, frame);
-    tryIgnite(world, x, y - 1, frame);
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) continue;
+            tryIgnite(world, x + dx, y + dy, frame);
+        }
+    }
 }
 
 // Fire and burning fuel age by one tick, spread to whatever is next to them, and
@@ -133,8 +134,9 @@ void updateFire(World& world, const SimRect& region, int frame) {
     }
 
     // Smoke dissipates: lose a little mass each tick, and vanish when empty.
-    for (int y = region.y0; y <= region.y1 && y < height; ++y) {
-        for (int x = region.x0; x <= region.x1 && x < width; ++x) {
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (!inRect(region, x, y)) continue;
             if (world.at(x, y) != Mat::Smoke) continue;
             float m = world.mass(x, y) - 0.05f;
             if (m <= kMassEmpty) world.setMass(x, y, Mat::Air, 0.0f);
@@ -152,7 +154,7 @@ bool canReact(Mat m) {
     if (m == Mat::SulfurCrust) return true;
     if (m == Mat::Soil || m == Mat::PackedDirt) return true;
     const MaterialInfo& info = materialInfo(m);
-    return info.meltable || info.flammable || info.washedByWater || info.acidCorrodes;
+    return info.meltable || info.flammable || info.washedByWater;
 }
 
 // The PRD's "large volumes of lava near water -> obsidian instead of stone".
@@ -236,24 +238,8 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
         return;
     }
 
-    const bool hotIsA = (a == Mat::Lava || a == Mat::Fire || a == Mat::Acid);
-
-    // Acid corrodes materials that are vulnerable to it.
-    if (a == Mat::Acid || b == Mat::Acid) {
-        const int ax = (a == Mat::Acid) ? x : nx;
-        const int ay = (a == Mat::Acid) ? y : ny;
-        const int tx = (a == Mat::Acid) ? nx : x;
-        const int ty = (a == Mat::Acid) ? ny : y;
-        const Mat target = world.at(tx, ty);
-        if (materialInfo(target).acidCorrodes) {
-            world.set(tx, ty, Mat::Air);
-            // Acid spreads into the gap.
-            if (world.at(ax, ay) == Mat::Acid) {
-                // consume a bit of acid
-            }
-            return;
-        }
-    }
+    // Everything left is heat's doing. Lava acts like fire, only harsher.
+    const bool hotIsA = (a == Mat::Lava || a == Mat::Fire);
     if (!hotIsA && b != Mat::Lava && b != Mat::Fire) return;
     const Mat hot = hotIsA ? a : b;
     const int hx = hotIsA ? nx : x;
@@ -353,22 +339,14 @@ int surfaceRow(const World& world, int x, int from) {
 // mobile material (masses add) or air (it becomes material).
 bool handOffCrumb(World& world, int x, int y, Mat self, float amount) {
     if (amount <= 0.0f) return false;
-    const MaterialInfo& info = materialInfo(self);
-    bool rises = info.rises;
-    // Diagonals first (downhill), then sides. For gases, "downhill" is up.
-    static const int dxDown[4] = {-1, +1, -1, +1};
-    static const int dyDown[4] = {+1, +1, 0, 0};
-    static const int dxUp[4] = {-1, +1, -1, +1};
-    static const int dyUp[4] = {-1, -1, 0, 0};
-    const int* dx = rises ? dxUp : dxDown;
-    const int* dy = rises ? dyUp : dyDown;
+    static const int dx[4] = {-1, +1, -1, +1};
+    static const int dy[4] = {+1, +1, 0, 0};
     for (int i = 0; i < 4; ++i) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
-        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
-        if (there != Mat::Air && there != self) continue;
+        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
         if (there != Mat::Air && !mobileThere) continue;
         const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
         world.setMass(nx, ny, mobileThere ? there : self, current + amount);
@@ -401,20 +379,23 @@ void flowMass(World& world, int x, int y, float& budget) {
     const int gy = y + gDir;
     if (gy >= 0 && gy < world.height()) {
         const Mat along = world.at(x, gy);
-        const bool alongFlows = materialInfo(along).flows && (along == self || along == Mat::Air);
+        const bool alongFlows = materialInfo(along).flows;
         const bool alongFalls = materialInfo(along).falls && (along == self);
         const bool alongRises = materialInfo(along).rises && (along == self);
-        const bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
+        bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
+        if (info.falls && materialInfo(along).flows && self != Mat::PackedDirt) alongTakes = true;
         if (alongTakes) {
-            const float alongLive = (alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f;
-            const float room = 1.0f - alongLive;
+            const float alongMass = (alongFlows || alongFalls || alongRises) ? world.massAt(x, gy) : 0.0f;
+            const float room = 1.0f - alongMass;
             if (room > 0.0f) {
                 float flow = std::min(myMass, room);
                 if (myMass - flow < kMassEmpty) flow = myMass;
                 if (flow > kFlowMin) {
-                    const Mat into = (alongFlows || alongFalls || alongRises) ? along : self;
+                    const Mat into = (info.falls && materialInfo(along).flows && !(materialInfo(along).falls) && self != Mat::PackedDirt) ? self :
+                                     ((alongFlows || alongFalls || alongRises) ? along : self);
+                    const float alongNow = (alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f;
                     world.setMass(x, y, self, world.mass(x, y) - flow);
-                    world.setMass(x, gy, into, alongLive + flow);
+                    world.setMass(x, gy, into, alongNow + flow);
                     budget -= flow;
                     return;
                 }
@@ -446,19 +427,14 @@ void flowMass(World& world, int x, int y, float& budget) {
     }
 
     float offers[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    static constexpr int dx[4] = {-1, +1, -1, +1};
-    int dy[4] = {0, 0, gDir, gDir};
+    const int dx[4] = {-1, +1, -1, +1};
+    const int dy[4] = {0, 0, gDir, gDir};
     for (int i = 0; i < 4; ++i) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
         if (there != Mat::Air && !materialInfo(there).flows && !materialInfo(there).falls && !materialInfo(there).rises) continue;
-        // Don't let different liquid/gas types blend into each other.
-        if (there != Mat::Air && materialInfo(there).flows && there != self) continue;
-        if (there != Mat::Air && materialInfo(there).rises && there != self) continue;
-        // Don't let different solid types blend into each other.
-        if (there != Mat::Air && materialInfo(there).falls && there != self) continue;
 
         if (info.falls) {
             const int drop = surfaceRow(world, nx, ny) - surfaceRow(world, x, y);
@@ -480,7 +456,7 @@ void flowMass(World& world, int x, int y, float& budget) {
     float totalOffer = 0.0f;
     for (int i = 0; i < 4; ++i) totalOffer += offers[i];
     if (totalOffer <= kFlowMin) return;
-    const float scale = std::min(1.0f, myMass / totalOffer);
+    const float scale = std::min(1.0f, std::min(myMass, budget) / totalOffer);
     if (scale <= 0.0f) return;
 
     float given = 0.0f;
@@ -507,7 +483,6 @@ void flowMass(World& world, int x, int y, float& budget) {
             if (!world.inBounds(nx, ny)) continue;
             const Mat there = world.at(nx, ny);
             const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
-            if (there != Mat::Air && there != self) continue;
             if (there != Mat::Air && !mobileThere) continue;
             const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
             world.setMass(nx, ny, mobileThere ? there : self, current + remain);
@@ -515,7 +490,7 @@ void flowMass(World& world, int x, int y, float& budget) {
             break;
         }
         if (remain > 0.0f) {
-            world.setMass(x, y, self, remain);
+            world.setMass(x, y, self, world.mass(x, y));
             return;
         }
     }

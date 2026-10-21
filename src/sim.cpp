@@ -133,9 +133,8 @@ void updateFire(World& world, const SimRect& region, int frame) {
     }
 
     // Smoke dissipates: lose a little mass each tick, and vanish when empty.
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            if (!inRect(region, x, y)) continue;
+    for (int y = region.y0; y <= region.y1 && y < height; ++y) {
+        for (int x = region.x0; x <= region.x1 && x < width; ++x) {
             if (world.at(x, y) != Mat::Smoke) continue;
             float m = world.mass(x, y) - 0.05f;
             if (m <= kMassEmpty) world.setMass(x, y, Mat::Air, 0.0f);
@@ -353,6 +352,7 @@ bool handOffCrumb(World& world, int x, int y, Mat self, float amount) {
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
         const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
+        if (there != Mat::Air && there != self) continue;
         if (there != Mat::Air && !mobileThere) continue;
         const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
         world.setMass(nx, ny, mobileThere ? there : self, current + amount);
@@ -464,7 +464,7 @@ void flowMass(World& world, int x, int y, float& budget) {
     float totalOffer = 0.0f;
     for (int i = 0; i < 4; ++i) totalOffer += offers[i];
     if (totalOffer <= kFlowMin) return;
-    const float scale = std::min(1.0f, std::min(myMass, budget) / totalOffer);
+    const float scale = std::min(1.0f, myMass / totalOffer);
     if (scale <= 0.0f) return;
 
     float given = 0.0f;

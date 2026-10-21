@@ -7,6 +7,53 @@
 #include <cmath>
 #include <tuple>
 
+namespace {
+
+// Gravity on a thrown tool, in cells per tick squared.
+constexpr float THROW_GRAVITY = 0.05f;
+
+// How much of the speed the air takes off, every tick.
+constexpr float THROW_DRAG = 0.995f;
+
+// How a thrown tool is aimed.
+//
+// The player clicks where they want the tool to land, so the throw has to
+// arrive there - otherwise clicking on a tree drops the dynamite halfway to
+// it. The flight time grows with the distance (a short toss is quick, a long
+// one lobs), and the starting speed is worked out from that flight time, so
+// the tool lands where it was aimed.
+//
+// Two things bend the flight: gravity pulls the tool down the whole way, and
+// air resistance takes a little off the speed every tick. Both are worked out
+// here, in advance, so the answer is where the player pointed.
+void aimThrow(float sx, float sy, float tx, float ty,
+              float& vx, float& vy,
+              float cellsPerTick, float minFlight, float maxFlight) {
+    const float dx = tx - sx;
+    const float dy = ty - sy;
+    const float len = std::sqrt(dx * dx + dy * dy);
+
+    // How long the tool is in the air.
+    float flight = len / cellsPerTick;
+    if (flight < minFlight) flight = minFlight;
+    if (flight > maxFlight) flight = maxFlight;
+
+    // How far a speed of one travels in that time, once air resistance has
+    // had its say. Sideways that is simply the sum of the shrinking speeds.
+    const float reach = (1.0f - std::pow(THROW_DRAG, flight)) / (1.0f - THROW_DRAG);
+
+    // Gravity on its own would pull the tool down at this speed by the end of
+    // the flight, so the throw only has to make up the difference. Gravity is
+    // applied before the air gets its say, so the sideways sum has one more
+    // factor of drag in it than the upward one.
+    const float fall = THROW_GRAVITY * THROW_DRAG / (1.0f - THROW_DRAG);
+
+    vx = dx / reach;
+    vy = fall + (dy - fall * flight) / (THROW_DRAG * reach);
+}
+
+}  // namespace
+
 const char* Tools::name(Tool t) {
     switch (t) {
         case Tool::SparkWand: return "SPARK WAND";
@@ -37,20 +84,14 @@ void Tools::fire(float sx, float sy, float tx, float ty) {
             cooldown_ = 8;
             break;
         case Tool::Dynamite: {
-            float speed = std::min(len * 0.08f, 2.0f);
-            if (speed < 0.4f) speed = 0.4f;
-            p.vx = dx / len * speed;
-            p.vy = dy / len * speed - 0.3f;
+            aimThrow(sx, sy, tx, ty, p.vx, p.vy, 5.0f, 18.0f, 70.0f);
             p.life = 150;
             p.tool = Tool::Dynamite;
             cooldown_ = 20;
             break;
         }
         case Tool::AcidFlask: {
-            float speed = std::min(len * 0.08f, 1.5f);
-            if (speed < 0.4f) speed = 0.4f;
-            p.vx = dx / len * speed;
-            p.vy = dy / len * speed - 0.2f;
+            aimThrow(sx, sy, tx, ty, p.vx, p.vy, 4.0f, 20.0f, 80.0f);
             p.life = 150;
             p.tool = Tool::AcidFlask;
             cooldown_ = 20;
@@ -68,9 +109,9 @@ void Tools::tick(World& world) {
 
         // Gravity for thrown objects with air resistance.
         if (p.tool != Tool::SparkWand) {
-            p.vy += 0.05f;
-            p.vx *= 0.995f;
-            p.vy *= 0.995f;
+            p.vy += THROW_GRAVITY;
+            p.vx *= THROW_DRAG;
+            p.vy *= THROW_DRAG;
         }
 
         // Sub-step movement to prevent tunneling through pixels.
@@ -164,14 +205,25 @@ void Tools::detonate(World& world, Projectile& p) {
         options.smokePuffs = underwater ? 12 : 24;
         blast(world, cx, cy, options);
     } else if (p.tool == Tool::AcidFlask) {
-        // Splash acid in a pool.
-        for (int dy = -2; dy <= 2; ++dy) {
-            for (int dx = -4; dx <= 4; ++dx) {
-                int x = cx + dx, y = cy + dy;
+        // The flask shatters. Its acid ends up in the air around the impact -
+        // the visible splash - and in the cell it actually struck, so that it
+        // can work its way into the material around it. The acid is used up as
+        // it eats, so a splash carves a hole and then is gone.
+        for (int dy = -3; dy <= 3; ++dy) {
+            for (int dx = -5; dx <= 5; ++dx) {
+                const int x = cx + dx;
+                const int y = cy + dy;
                 if (!world.inBounds(x, y)) continue;
-                if (world.at(x, y) == Mat::Air) {
-                    world.setMass(x, y, Mat::Acid, 0.6f + (rand() % 40) / 100.0f);
+                const Mat here = world.at(x, y);
+                const bool isImpact = (dx == 0 && dy == 0);
+                if (here != Mat::Air) {
+                    // Only the cell the flask struck is broken into. Everything
+                    // else has to be air for the acid to splash into, so that
+                    // a splash never eats a hole on its own.
+                    if (!isImpact) continue;
+                    if (materialInfo(here).flows) continue;
                 }
+                world.setMass(x, y, Mat::Acid, 0.5f + (rand() % 50) / 100.0f);
             }
         }
     }

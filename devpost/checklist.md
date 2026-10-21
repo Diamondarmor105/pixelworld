@@ -69,7 +69,7 @@ Build mode: fast
   Learner check: Run `make run` and walk right for a long stretch — new terrain should keep arriving, with hills, caves, ponds, trees and ruins appearing. Burn or blast something, walk far away, then walk all the way back: it should still be burnt or blasted. Does the world feel varied enough, or too repetitive?
   Commit: `Add chunked endless terrain generation and hand-made structures`
 
-- [ ] **7. Three tools: spark wand, dynamite, acid flask**
+- [x] **7. Three tools: spark wand, dynamite, acid flask**
   Becomes usable: Number keys 1/2/3 switch tools, the mouse aims, and clicking uses the selected tool — a spark that lights fire on impact, a thrown stick of dynamite that blows a crater, and a thrown flask that shatters into acid and carves tunnels.
   Why now: With the world and player working, tools are the interaction that completes the core loop from the PRD. It is also the last thing the temporary fire brush was standing in for, so the debug control goes away here.
   PRD ref: `prd.md > Tools`, `prd.md > The Core Journey` (steps 4-7)
@@ -112,6 +112,14 @@ Reflection:
 Activity mode:
 
 ## Revisions
+
+- Slice 7 — **the three tools, and two bugs the tools had been hiding**:
+  - **The acid flask had done nothing at all.** The rule that lets acid eat through rock was written once and then dropped by accident in a later rewrite of the reaction code (commit `3a88e55`) — the acid still appeared on screen, still flowed like a liquid, but never dissolved a thing. Nothing caught it, because the tools had no checks of their own. The rule is back, and it is stricter than before: the acid spends **two thirds of what it has left on every cell it dissolves**, so a thick pool bites deep and a thin film nibbles, and a splash of acid is used up and gone once it has carved its hole.
+  - **The flask shattered into nothing useful.** The splash only put acid into *empty* cells, so hitting solid ground put the acid nowhere at all. The splash now goes into the air around the impact **and into the cell the flask actually struck**, so the acid starts inside the material and can work its way out of it. Measured: 34 cells of acid on impact, and **135 cells of stone eaten** over the next 600 steps — a hole dynamite could never make.
+  - **The throw ignored where you were aiming.** The thrown tools had a fixed speed, so the dynamite landed 83 cells away whether you clicked on the next tree or on the hill half a screen away — the range could not be changed at all. The throw is now **aimed**: the flight time grows with the distance, and the starting speed is worked out from that flight time so the tool arrives where you pointed. Gravity and air resistance are both allowed for in the sum. Measured across the whole range: the tool lands **within 5 cells of the aim point**, every time, from 30 cells to 390 cells away. (Getting the sum right took two goes: gravity is applied *before* the air takes its cut, so the upward part of the flight carries one more factor of drag than the sideways part. With that missing, the dynamite fell ten cells short every time.)
+  - **The tools had no checks of their own.** Five new self-tests (35 in total, all passing): `wand stops at solid and lights fire` (the fire lands on the wood's face and no further), `dynamite craters dirt but not stone` (650 cells of soil against 49 of stone), `flask pours acid and acid carves stone`, `tool cooldown` (twenty clicks in twenty ticks make three shots, not twenty), and `a thrown tool lands where you aimed`.
+  - **The HUD has its own file now** (`src/hud.h/.cpp`), so the game loop is about the game and not about drawing — and so the health bar has somewhere to live in slice 8.
+  - The acid's rule is one line in the material table (`acidCorrodes`), so adding a material that acid can eat is a table entry, not a code change.
 
 - Slice 6 — **the endless world, and the three bugs that only an endless world could show**:
   - **The world is now made of chunks, and it never ends sideways.** The old grid was a fixed 480-wide board with a right-hand wall. It is now a map of **256-wide chunks** held in an `unordered_map`, generated on demand as the player walks, and **never thrown away** — which is what makes destruction stick: blast a tree at x=300, walk 2000 cells east, walk back, and it is still blasted. The ground's height curve is a **pure function of the world coordinate**, so two neighbouring chunks always agree exactly where they meet, and every structure is placed wholly inside one chunk, so there is no seam to see.

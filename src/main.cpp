@@ -7,6 +7,7 @@
 #include "blast.h"
 #include "camera.h"
 #include "generation.h"
+#include "hud.h"
 #include "materials.h"
 #include "player.h"
 #include "raylib.h"
@@ -182,7 +183,7 @@ int runGame(bool smoke) {
             DrawRectangle((int)sx - 2, (int)sy - 2, 4, 4, c);
         }
         // HUD: tool name.
-        DrawText(Tools::name(tools.selected()), 10, 10, 20, WHITE);
+        Hud::drawTool(Tools::name(tools.selected()));
         EndDrawing();
 
         ++frames;
@@ -1194,6 +1195,150 @@ bool checkDamageSurvives() {
     return passed;
 }
 
+// Self-test: the spark wand's shot must stop at the first solid thing it
+// meets and set fire to it, not sail on through.
+bool checkWandStopsAtSolid() {
+    World world(MAX_GRID_HEIGHT);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x)
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    // A wooden block to aim at.
+    for (int x = 100; x <= 120; ++x)
+        for (int y = 150; y <= 200; ++y) world.set(x, y, Mat::Wood);
+    const int woodBefore = world.count(Mat::Wood);
+
+    Tools tools;
+    tools.setTool(Tool::SparkWand);
+    tools.fire(50.0f, 175.0f, 200.0f, 175.0f);
+    for (int i = 0; i < 60; ++i) tools.tick(world);
+
+    // Where did the fire land?
+    int fireLeft = 1 << 30;
+    int fireRight = -1;
+    int fireCells = 0;
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x)
+        for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+            if (world.at(x, y) != Mat::Fire) continue;
+            ++fireCells;
+            if (x < fireLeft) fireLeft = x;
+            if (x > fireRight) fireRight = x;
+        }
+
+    // The shot stopped at the wood's face (column 100) and lit it up. If it
+    // had carried on through the block, the fire would be past column 120.
+    const bool stopped = fireCells > 0 && fireLeft >= 98 && fireRight <= 103;
+    const bool lit = world.count(Mat::Wood) < woodBefore;
+    const bool passed = stopped && lit;
+    std::printf("wand stops at solid and lights fire: %s (%d fire cells, columns %d..%d)\n",
+                passed ? "PASS" : "FAIL", fireCells, fireLeft, fireRight);
+    return passed;
+}
+
+// Self-test: dynamite digs a big crater in dirt, but stone is far too tough
+// for it. Dirt has almost no resistance, stone has a lot.
+bool checkDynamiteCrater() {
+    int removedSoil = 0;
+    int removedStone = 0;
+    for (int field = 0; field < 2; ++field) {
+        World world(MAX_GRID_HEIGHT);
+        const Mat fill = (field == 0) ? Mat::Soil : Mat::Stone;
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x)
+            for (int y = 0; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, fill);
+        const int before = world.count(fill);
+
+        Tools tools;
+        tools.setTool(Tool::Dynamite);
+        tools.fire(240.0f, 100.0f, 240.0f, 140.0f);
+        for (int i = 0; i < 10; ++i) tools.tick(world);
+
+        if (field == 0) removedSoil = before - world.count(fill);
+        else removedStone = before - world.count(fill);
+    }
+
+    const bool passed = removedSoil > 150 && removedStone * 4 < removedSoil;
+    std::printf("dynamite craters dirt but not stone: %s (soil %d cells, stone %d cells)\n",
+                passed ? "PASS" : "FAIL", removedSoil, removedStone);
+    return passed;
+}
+
+// Self-test: the acid flask shatters into a splash of acid, and the acid
+// eats its way into the stone it landed on.
+bool checkAcidFlaskCarvesStone() {
+    World world(MAX_GRID_HEIGHT);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x)
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    const int stoneBefore = world.count(Mat::Stone);
+
+    Tools tools;
+    tools.setTool(Tool::AcidFlask);
+    tools.fire(240.0f, 60.0f, 240.0f, 200.0f);
+    // The flask has to fall before it breaks, so give it plenty of ticks.
+    for (int i = 0; i < 150; ++i) tools.tick(world);
+    const int acidAtImpact = world.count(Mat::Acid);
+
+    Simulation sim(world);
+    for (int i = 0; i < 600; ++i) sim.step(world);
+    const int stoneAfter = world.count(Mat::Stone);
+    const int eaten = stoneBefore - stoneAfter;
+
+    const bool passed = acidAtImpact > 10 && eaten > 20;
+    std::printf("flask pours acid and acid carves stone: %s (%d acid cells, %d stone cells eaten)\n",
+                passed ? "PASS" : "FAIL", acidAtImpact, eaten);
+    return passed;
+}
+
+// Self-test: the tools have a cooldown, so holding the mouse down cannot
+// empty the whole arsenal into the world at once.
+bool checkToolCooldown() {
+    World world(MAX_GRID_HEIGHT);
+    Tools tools;
+    tools.setTool(Tool::SparkWand);
+    for (int i = 0; i < 20; ++i) {
+        tools.fire(10.0f, 10.0f, 200.0f, 10.0f);
+        tools.tick(world);
+    }
+    const int shots = static_cast<int>(tools.projectiles().size());
+
+    // Twenty clicks in twenty ticks, with a cooldown of eight ticks, can only
+    // be three shots.
+    const bool passed = shots >= 1 && shots <= 4;
+    std::printf("tool cooldown: %s (%d shots in the air after 20 clicks)\n",
+                passed ? "PASS" : "FAIL", shots);
+    return passed;
+}
+
+// Self-test: a thrown tool must land where the player aimed. This used to be
+// badly wrong: the throw had a fixed speed, so the dynamite landed the same
+// distance away whether you clicked on the next tree or on the far hill.
+bool checkThrowLandsWhereAimed() {
+    bool passed = true;
+    float worst = 0.0f;
+    for (int tool = 1; tool <= 2; ++tool) {
+        for (int distance = 40; distance <= 240; distance += 40) {
+            World world(MAX_GRID_HEIGHT);
+            for (int x = 0; x < MAX_GRID_WIDTH; ++x)
+                for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+
+            Tools tools;
+            tools.setTool(tool == 1 ? Tool::Dynamite : Tool::AcidFlask);
+            tools.fire(40.0f, 190.0f, 40.0f + static_cast<float>(distance), 200.0f);
+
+            float landedX = 40.0f;
+            for (int i = 0; i < 200; ++i) {
+                tools.tick(world);
+                if (tools.projectiles().empty()) break;
+                landedX = tools.projectiles().front().x;
+            }
+
+            const float off = (landedX - 40.0f) - static_cast<float>(distance);
+            if (off < 0.0f ? -off > worst : off > worst) worst = off < 0.0f ? -off : off;
+            if ((off < 0.0f ? -off : off) > 6.0f) passed = false;
+        }
+    }
+    std::printf("a thrown tool lands where you aimed: %s (worst miss %.1f cells)\n",
+                passed ? "PASS" : "FAIL", worst);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -1236,6 +1381,11 @@ int runSelfTest() {
     if (!checkBlastBreaksStone()) passed = false;
     if (!checkBlastStopsAtWall()) passed = false;
     if (!checkWallCostsBlastEnergy()) passed = false;
+    if (!checkWandStopsAtSolid()) passed = false;
+    if (!checkDynamiteCrater()) passed = false;
+    if (!checkAcidFlaskCarvesStone()) passed = false;
+    if (!checkToolCooldown()) passed = false;
+    if (!checkThrowLandsWhereAimed()) passed = false;
     if (!checkPlayerRestsOnGround()) passed = false;
     if (!checkPlayerJumpsAndLands()) passed = false;
     if (!checkPlayerBlockedByStone()) passed = false;

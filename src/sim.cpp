@@ -148,8 +148,9 @@ bool canReact(Mat m) {
     if (m == Mat::Water || m == Mat::Lava || m == Mat::Fire) return true;
     if (m == Mat::SulfurCrust) return true;
     if (m == Mat::Soil || m == Mat::PackedDirt) return true;
+    if (m == Mat::Acid) return true;
     const MaterialInfo& info = materialInfo(m);
-    return info.meltable || info.flammable || info.washedByWater;
+    return info.meltable || info.flammable || info.washedByWater || info.acidCorrodes;
 }
 
 // The PRD's "large volumes of lava near water -> obsidian instead of stone".
@@ -208,6 +209,28 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
             world.set(sx, sy, Mat::Mud);
         } else if (materialInfo(ground).washedByWater) {
             world.set(sx, sy, Mat::Air);
+        }
+        return;
+    }
+
+    // Acid eats through anything marked as vulnerable to it, and is used up
+    // doing the eating: a splash of acid can carve a hole and then be gone.
+    // The acid spends two thirds of what it has left on every cell it
+    // dissolves, so a thin film of acid nibbles away slowly while a thick
+    // pool bites deep.
+    if (a == Mat::Acid || b == Mat::Acid) {
+        const bool acidIsA = (a == Mat::Acid);
+        const int ax = acidIsA ? x : nx;
+        const int ay = acidIsA ? y : ny;
+        const int tx = acidIsA ? nx : x;
+        const int ty = acidIsA ? ny : y;
+        const Mat target = world.at(tx, ty);
+        if (target != Mat::Acid && materialInfo(target).acidCorrodes) {
+            world.set(tx, ty, Mat::Air);
+            const float mass = world.mass(ax, ay);
+            const float left = mass / 3.0f;
+            if (left > kMassEmpty) world.setMass(ax, ay, Mat::Acid, left);
+            else world.setMass(ax, ay, Mat::Air, 0.0f);
         }
         return;
     }

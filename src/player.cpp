@@ -73,8 +73,8 @@ void Player::tick(World& world, float moveInput, bool jumpInput) {
     moveAxis(world, vx_, true, false);
     moveAxis(world, vy_, false, false);
 
-    // Never fall out of the bottom of the world, and never above the sky or off
-    // either end of the level.
+    // Never fall out of the bottom of the world, and never above the sky. There
+    // is no limit sideways: the world goes on for ever.
     if (y_ < 0.0f) {
         y_ = 0.0f;
         vy_ = 0.0f;
@@ -84,14 +84,6 @@ void Player::tick(World& world, float moveInput, bool jumpInput) {
         y_ = floorY;
         vy_ = 0.0f;
         onGround_ = true;
-    }
-    const float maxX = static_cast<float>(world.width() - WIDTH);
-    if (x_ < 0.0f) {
-        x_ = 0.0f;
-        vx_ = 0.0f;
-    } else if (x_ > maxX) {
-        x_ = maxX;
-        vx_ = 0.0f;
     }
 }
 

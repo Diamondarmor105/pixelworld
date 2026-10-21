@@ -1,12 +1,162 @@
 #include "generation.h"
 
+#include "materials.h"
+#include "structures.h"
+
+#include <algorithm>
 #include <cmath>
 
 namespace {
 
-// Ground height for a given column, in cells from the top. A gentle hill so the
-// scene is not a flat line.
-int surfaceRow(int x, int worldHeight) {
+// The seed of the whole world. One number decides everything: where the hills
+// are, where the caves run, what is buried where.
+constexpr uint32_t kWorldSeed = 0x9E3779B9u;
+
+// The row at and above which the ground is covered in snow: the mountain tops.
+constexpr int kSnowLine = 250;
+
+// -- Noise -----------------------------------------------------------------
+//
+// Everything the generator decides comes out of these. They are not random:
+// the same inputs always give the same answer, which is what makes a chunk
+// the same every time it is built.
+
+// A repeatable pseudo-random number, the same every time for the same inputs.
+uint32_t hashBits(int a, int b, int c) {
+    uint32_t h = static_cast<uint32_t>(a) * 374761393u;
+    h ^= static_cast<uint32_t>(b) * 668265263u;
+    h ^= static_cast<uint32_t>(c) * 2246822519u;
+    h ^= h >> 13;
+    h *= 1274126177u;
+    h ^= h >> 16;
+    return h;
+}
+
+// The same, as a number between 0 and 1.
+float hash01(int a, int b, int c) {
+    return static_cast<float>(hashBits(a, b, c) & 0xFFFFFFu) / static_cast<float>(0x1000000);
+}
+
+// Smooth noise in one dimension: a number that wanders smoothly between 0 and
+// 1 instead of jumping about.
+float noise1(float x, uint32_t seed) {
+    const int cell = static_cast<int>(std::floor(x));
+    const float f = x - static_cast<float>(cell);
+    const float a = hash01(cell, 0, static_cast<int>(seed));
+    const float b = hash01(cell + 1, 0, static_cast<int>(seed));
+    const float t = f * f * (3.0f - 2.0f * f);
+    return a + (b - a) * t;
+}
+
+// Smooth noise in two dimensions.
+float noise2(float x, float y, uint32_t seed) {
+    const int ix = static_cast<int>(std::floor(x));
+    const int iy = static_cast<int>(std::floor(y));
+    const float fx = x - static_cast<float>(ix);
+    const float fy = y - static_cast<float>(iy);
+    const float tx = fx * fx * (3.0f - 2.0f * fx);
+    const float ty = fy * fy * (3.0f - 2.0f * fy);
+    const float a = hash01(ix,     iy,     static_cast<int>(seed));
+    const float b = hash01(ix + 1, iy,     static_cast<int>(seed));
+    const float c = hash01(ix,     iy + 1, static_cast<int>(seed));
+    const float d = hash01(ix + 1, iy + 1, static_cast<int>(seed));
+    const float top = a + (b - a) * tx;
+    const float bottom = c + (d - c) * tx;
+    return top + (bottom - top) * ty;
+}
+
+// Several layers of noise on top of each other. The detail is what makes a
+// surface look natural rather than smooth.
+float fbm1(float x, uint32_t seed, int octaves) {
+    float total = 0.0f;
+    float amplitude = 1.0f;
+    float frequency = 1.0f;
+    float norm = 0.0f;
+    for (int i = 0; i < octaves; ++i) {
+        total += noise1(x * frequency, seed + static_cast<uint32_t>(i) * 7919u) * amplitude;
+        norm += amplitude;
+        amplitude *= 0.5f;
+        frequency *= 2.0f;
+    }
+    return total / norm;
+}
+
+float fbm2(float x, float y, uint32_t seed, int octaves) {
+    float total = 0.0f;
+    float amplitude = 1.0f;
+    float frequency = 1.0f;
+    float norm = 0.0f;
+    for (int i = 0; i < octaves; ++i) {
+        total += noise2(x * frequency, y * frequency, seed + static_cast<uint32_t>(i) * 7919u) * amplitude;
+        norm += amplitude;
+        amplitude *= 0.5f;
+        frequency *= 2.0f;
+    }
+    return total / norm;
+}
+
+// -- What the ground is made of ---------------------------------------------
+
+// The rock under the surface at a given depth. Soil on top, then packed dirt,
+// then stone with bands of limestone and basalt mixed through it.
+Mat layerMaterial(int worldX, int y, int surface) {
+    const int depth = y - surface;
+    if (depth <= 2) return Mat::Soil;
+
+    const int dirtDepth = 14 + static_cast<int>(hash01(worldX / 6, 5, static_cast<int>(kWorldSeed)) * 20.0f);
+    if (depth < 3 + dirtDepth) return Mat::PackedDirt;
+
+    const float band = fbm2(static_cast<float>(worldX) / 70.0f, static_cast<float>(y) / 30.0f,
+                            kWorldSeed + 31u, 2);
+    if (band > 0.70f) return Mat::Basalt;
+    if (band < 0.26f) return Mat::Limestone;
+    return Mat::Stone;
+}
+
+// Is there a cave at this spot?
+//
+// Caves are a property of the world, not of the chunk, so one can run across a
+// chunk boundary without a wall appearing in the seam.
+bool isCave(int worldX, int y, int surface) {
+    if (y < surface + 10) return false;   // the surface stays intact
+    const float n = fbm2(static_cast<float>(worldX) / 44.0f, static_cast<float>(y) / 34.0f,
+                          kWorldSeed + 41u, 3);
+    return n > 0.655f;
+}
+
+// -- Drawing the hand-made patterns ----------------------------------------
+
+// Puts one hand-made pattern into a chunk, standing on the ground at `baseX`
+// and `baseY` (the bottom-left corner, in world cells).
+void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int baseY) {
+    const int height = static_cast<int>(chunk.cells.size() / Chunk::WIDTH);
+
+    for (int row = 0; row < pattern.rowCount; ++row) {
+        const char* line = pattern.rows[row];
+        // The pattern is written top row first, but it stands on the ground, so
+        // its bottom row goes at `baseY` and the rest stack upwards.
+        const int y = baseY - (pattern.rowCount - 1 - row);
+        if (y < 0 || y >= height) continue;
+
+        for (int column = 0; line[column] != '\0'; ++column) {
+            const int localX = baseX + column;
+            if (localX < 0 || localX >= Chunk::WIDTH) continue;
+            const Mat m = structureMaterial(line[column]);
+            if (m == Mat::Air) continue;
+            const size_t cell = chunk.index(localX, y);
+            chunk.cells[cell] = static_cast<uint8_t>(m);
+            chunk.mass[cell] = isMobile(m) ? 1.0f : 0.0f;
+        }
+    }
+}
+
+// -- The hand-made test scenes ----------------------------------------------
+//
+// These are the small fixed scenes the self-test runs against. They are not
+// part of the endless world; they are there so a check has something small and
+// known to measure.
+
+int testSurfaceRow(int x, int worldHeight) {
     const int base = static_cast<int>(worldHeight * 0.72f);
     const int wave = static_cast<int>(7.0f * std::sin(static_cast<float>(x) * 0.02f));
     const int hill = static_cast<int>(4.0f * std::sin(static_cast<float>(x) * 0.005f));
@@ -15,11 +165,10 @@ int surfaceRow(int x, int worldHeight) {
 
 // Ground: packed dirt at the top, stone underneath, bedrock floor.
 void buildGround(World& world) {
-    const int width = world.width();
     const int height = world.height();
 
-    for (int x = 0; x < width; ++x) {
-        const int surface = surfaceRow(x, height);
+    for (int x = 0; x < TEST_SCENE_WIDTH; ++x) {
+        const int surface = testSurfaceRow(x, height);
         for (int y = surface; y < height; ++y) {
             Mat material = Mat::PackedDirt;
             if (y > surface + 3) material = Mat::Stone;
@@ -74,7 +223,7 @@ void setFire(World& world, int x0, int x1, int y0, int y1) {
 // A pool of lava in a stone cup, sunk into the ground. The stone keeps it from
 // wandering off across the surface.
 void buildLavaPool(World& world, int centerX, int halfWidth, int depth) {
-    const int top = surfaceRow(centerX, world.height()) - 2;
+    const int top = testSurfaceRow(centerX, world.height()) - 2;
     for (int y = top; y <= top + depth + 1; ++y) {
         for (int dx = -halfWidth - 1; dx <= halfWidth + 1; ++dx) {
             const bool wall = std::abs(dx) == halfWidth + 1 || y == top + depth + 1;
@@ -138,7 +287,7 @@ void buildGap(World& world, int centerX, int halfWidth, int depth) {
     const int height = world.height();
     for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
         const int x = centerX + dx;
-        const int surface = surfaceRow(x, height);
+        const int surface = testSurfaceRow(x, height);
         for (int y = surface; y < surface + depth; ++y) {
             world.set(x, y, Mat::Air);
         }
@@ -153,7 +302,7 @@ void buildSandPit(World& world, int centerX, int halfWidth, int depth) {
     const int height = world.height();
     for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
         const int x = centerX + dx;
-        const int surface = surfaceRow(x, height);
+        const int surface = testSurfaceRow(x, height);
         const float t = static_cast<float>(std::abs(dx)) / static_cast<float>(halfWidth);
         const int drop = static_cast<int>(static_cast<float>(depth) * (1.0f - t * t));
 
@@ -166,7 +315,7 @@ void buildSandPit(World& world, int centerX, int halfWidth, int depth) {
 
 // A stone floor across the bottom of a test scene.
 void buildTestFloor(World& world, int floorTop) {
-    for (int x = 0; x < world.width(); ++x) {
+    for (int x = 0; x < TEST_SCENE_WIDTH; ++x) {
         for (int y = floorTop; y < world.height(); ++y) {
             world.set(x, y, Mat::Stone);
         }
@@ -175,24 +324,297 @@ void buildTestFloor(World& world, int floorTop) {
 
 }  // namespace
 
+// -- The endless world ------------------------------------------------------
+
+int groundRow(int worldX) {
+    const float x = static_cast<float>(worldX);
+
+    // Rolling hills, up and down by twenty rows or so.
+    const float hills = fbm1(x / 210.0f, kWorldSeed + 11u, 3) * 2.0f - 1.0f;
+
+    // Big slow mountains: a wave that comes and goes, so every stretch of the
+    // world has high ground somewhere in it.
+    const float ridge = std::max(0.0f, std::sin(x * 0.0035f + 1.1f));
+    const float peaks = ridge * (0.55f + 0.45f * fbm1(x / 430.0f, kWorldSeed + 23u, 2));
+
+    const float y = 300.0f - hills * 20.0f - peaks * 58.0f;
+    return static_cast<int>(std::lround(y));
+}
+
+void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* placements) {
+    const int baseX = index * Chunk::WIDTH;
+    const int height = static_cast<int>(chunk.cells.size() / Chunk::WIDTH);
+    if (height <= 0) return;
+
+    // 1. The ground: a surface that follows the height curve, layered soil,
+    //    dirt and rock underneath, snow on the high peaks, bedrock on the floor.
+    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
+        const int worldX = baseX + lx;
+        const int surface = groundRow(worldX);
+        for (int y = 0; y < height; ++y) {
+            Mat m = Mat::Air;
+            if (y >= surface) {
+                if (y >= height - 3) {
+                    m = Mat::Bedrock;                    // the floor of the world
+                } else if (surface <= kSnowLine && y < surface + 3) {
+                    m = Mat::Snow;                       // snow on the peaks
+                } else {
+                    m = layerMaterial(worldX, y, surface);
+                }
+            }
+            const size_t cell = chunk.index(lx, y);
+            chunk.cells[cell] = static_cast<uint8_t>(m);
+            chunk.life[cell] = 0;
+            chunk.mass[cell] = 0.0f;
+        }
+    }
+
+    // 2. Caves, hollowed out of the rock.
+    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
+        const int worldX = baseX + lx;
+        const int surface = groundRow(worldX);
+        for (int y = surface + 10; y < height - 3; ++y) {
+            if (!isCave(worldX, y, surface)) continue;
+            const size_t cell = chunk.index(lx, y);
+            chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
+            chunk.mass[cell] = 0.0f;
+        }
+    }
+
+    // 3. Pockets of loose material buried in the ground: sand, gravel, clay.
+    static const Mat kPocketMaterials[3] = {Mat::Sand, Mat::Gravel, Mat::Clay};
+    for (int i = 0; i < 4; ++i) {
+        const int kind = static_cast<int>(hash01(index, i, 91) * 3.0f) % 3;
+        const Mat m = kPocketMaterials[kind];
+        const int lx = 10 + static_cast<int>(hash01(index, i, 92) * (Chunk::WIDTH - 20.0f));
+        const int halfWidth = 3 + static_cast<int>(hash01(index, i, 93) * 6.0f);
+        const int halfHeight = 2 + static_cast<int>(hash01(index, i, 94) * 4.0f);
+        const int centreY = groundRow(baseX + lx) + 22 +
+                            static_cast<int>(hash01(index, i, 95) * 45.0f);
+        for (int dy = -halfHeight; dy <= halfHeight; ++dy) {
+            for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
+                const float nx = static_cast<float>(dx) / static_cast<float>(halfWidth);
+                const float ny = static_cast<float>(dy) / static_cast<float>(halfHeight);
+                if (nx * nx + ny * ny > 1.0f) continue;
+                const int l = lx + dx;
+                const int y = centreY + dy;
+                if (l < 0 || l >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
+                const size_t cell = chunk.index(l, y);
+                chunk.cells[cell] = static_cast<uint8_t>(m);
+                chunk.mass[cell] = 1.0f;
+            }
+        }
+    }
+
+    // 4. A pond on the surface, where the ground is flat enough to hold one.
+    //
+    //    The pond is a stone basin dug into the ground: a FLAT floor below
+    //    the lowest rim, so the water in it is level from end to end, a lip of
+    //    rock at each side to stop it wandering off down the hill, and a
+    //    stone floor underneath, because the ground down there might be hollow
+    //    - a cave under the pond would swallow the water whole.
+    int pondLeft = 0;
+    int pondRight = -1;
+    {
+        const int lx = 24 + static_cast<int>(hash01(index, 0, 101) * (Chunk::WIDTH - 48.0f));
+        const int worldX = baseX + lx;
+        const int surface = groundRow(worldX);
+        const int left = groundRow(worldX - 12);
+        const int right = groundRow(worldX + 12);
+        if (std::abs(left - surface) <= 5 && std::abs(right - surface) <= 5) {
+            const int half = 6 + static_cast<int>(hash01(index, 0, 102) * 6.0f);
+            const int spanLeft = lx - half;
+            const int spanRight = lx + half;
+
+            // The floor of the bowl: below the lowest rim of the whole span.
+            int floorRow = 0;
+            for (int l = spanLeft; l <= spanRight; ++l) {
+                floorRow = std::max(floorRow, groundRow(baseX + l));
+            }
+            floorRow += 2;
+            const int waterDepth = 3;
+            const int floorThickness = 3;
+
+            // Dig the bowl out.
+            for (int l = spanLeft; l <= spanRight; ++l) {
+                const int s = groundRow(baseX + l);
+                for (int y = s; y < floorRow + waterDepth; ++y) {
+                    if (y < 0 || y >= height) continue;
+                    const size_t cell = chunk.index(l, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
+                    chunk.mass[cell] = 0.0f;
+                }
+            }
+            // Fill it.
+            for (int l = spanLeft; l <= spanRight; ++l) {
+                for (int y = floorRow; y < floorRow + waterDepth; ++y) {
+                    if (y < 0 || y >= height) continue;
+                    const size_t cell = chunk.index(l, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Water);
+                    chunk.mass[cell] = 1.0f;
+                }
+            }
+            // The lip: rock at each side, up to the level of the water.
+            for (int l : {spanLeft - 1, spanRight + 1}) {
+                if (l < 0 || l >= Chunk::WIDTH) continue;
+                const int s = groundRow(baseX + l);
+                for (int y = s; y < floorRow + waterDepth; ++y) {
+                    if (y < 0 || y >= height) continue;
+                    const size_t cell = chunk.index(l, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
+                    chunk.mass[cell] = 0.0f;
+                }
+            }
+            // The floor of the basin, so the pond has a bottom to stand on.
+            for (int l = spanLeft - 1; l <= spanRight + 1; ++l) {
+                if (l < 0 || l >= Chunk::WIDTH) continue;
+                for (int y = floorRow + waterDepth; y < floorRow + waterDepth + floorThickness;
+                     ++y) {
+                    if (y < 0 || y >= height) continue;
+                    const size_t cell = chunk.index(l, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
+                    chunk.mass[cell] = 0.0f;
+                }
+            }
+            pondLeft = spanLeft;
+            pondRight = spanRight;
+        }
+    }
+
+    // 5. A lava pool deep down, in a stone cup, with sulfur crust in the rock
+    //    beside it. The cup is deeper than the lava, so the lava sits in the
+    //    bottom of it and stays put. Break the cup and the lava finds the
+    //    sulfur.
+    {
+        const int lx = 30 + static_cast<int>(hash01(index, 0, 111) * (Chunk::WIDTH - 60.0f));
+        const int top = groundRow(baseX + lx) + 70 +
+                        static_cast<int>(hash01(index, 0, 112) * 40.0f);
+        const int half = 5 + static_cast<int>(hash01(index, 0, 113) * 5.0f);
+        const int cupHeight = 13;
+        const int lavaHeight = 5;
+
+        // The cup: walls at each side and a floor at the bottom. The inside
+        // above the lava is hollow air.
+        for (int dx = -half - 1; dx <= half + 1; ++dx) {
+            for (int dy = 0; dy < cupHeight; ++dy) {
+                const int l = lx + dx;
+                const int y = top + dy;
+                if (l < 0 || l >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
+                const bool wall = std::abs(dx) == half + 1;
+                const bool floor = dy == cupHeight - 1;
+                Mat m = Mat::Air;
+                if (wall || floor) m = Mat::Stone;
+                else if (dy >= cupHeight - 1 - lavaHeight) m = Mat::Lava;
+                const size_t cell = chunk.index(l, y);
+                chunk.cells[cell] = static_cast<uint8_t>(m);
+                chunk.mass[cell] = (m == Mat::Lava) ? 1.0f : 0.0f;
+            }
+        }
+        // The sulfur is two cells out from the lava, so it waits for the lava to
+        // break the cup rather than setting it off on the first tick.
+        const int lavaTop = top + cupHeight - 1 - lavaHeight;
+        for (int dx = -half - 4; dx <= half + 4; ++dx) {
+            if (std::abs(dx) >= half + 2 && std::abs(dx) <= half + 4) {
+                for (int dy = 0; dy < 3; ++dy) {
+                    const int l = lx + dx;
+                    const int y = lavaTop + dy;
+                    if (l < 0 || l >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
+                    const size_t cell = chunk.index(l, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(Mat::SulfurCrust);
+                    chunk.mass[cell] = 0.0f;
+                }
+            }
+        }
+    }
+
+    // 6. The hand-made things that stand on the ground: a ruined wall, a tree,
+    //    a bush, a pile of bones. Each chunk's own recipe decides which ones
+    //    and where, and each one is kept inside the chunk so no seam appears.
+    struct Footprint {
+        int left;
+        int right;
+    };
+    std::vector<Footprint> footprints;
+
+    for (int i = 0; i < 3; ++i) {
+        const int kind = static_cast<int>(hash01(index, i, 121) * structureKindCount()) %
+                         structureKindCount();
+        const int variant = static_cast<int>(hash01(index, i, 122) * 8.0f);
+        const StructurePattern& pattern = structurePattern(kind, variant);
+        const int patternWidth = structurePatternWidth(pattern);
+        const int patternHeight = pattern.rowCount;
+        if (patternWidth <= 0 || patternWidth >= Chunk::WIDTH - 12) continue;
+
+        const int room = Chunk::WIDTH - 12 - patternWidth;
+        const int lx = 6 + static_cast<int>(hash01(index, i, 123) * static_cast<float>(room));
+
+        // Keep clear of the pond, so nothing is left standing in the water.
+        if (pondRight >= pondLeft && lx + patternWidth - 1 >= pondLeft && lx <= pondRight) {
+            continue;
+        }
+
+        // Keep clear of the other structures, so one does not grow out of
+        // another.
+        bool clashes = false;
+        for (const Footprint& f : footprints) {
+            if (lx + patternWidth - 1 >= f.left && lx <= f.right) clashes = true;
+        }
+        if (clashes) continue;
+
+        // The structure stands on the ground: its bottom row sits on the
+        // lowest ground underneath it, so it is never left hanging in the air.
+        int base = 0;
+        for (int dx = 0; dx < patternWidth; ++dx) {
+            base = std::max(base, groundRow(baseX + lx + dx));
+        }
+        base = std::min(base, height - patternHeight - 1);
+        if (base < patternHeight) continue;
+
+        drawPattern(chunk, pattern, lx, base);
+        footprints.push_back({lx, lx + patternWidth - 1});
+
+        if (placements) {
+            StructurePlacement placement;
+            placement.x = baseX + lx;
+            placement.y = base;
+            placement.width = patternWidth;
+            placement.height = patternHeight;
+            placement.kind = kind;
+            placement.variant = variant;
+            placements->push_back(placement);
+        }
+    }
+}
+
+void generateChunksAround(World& world, int worldX, int radius) {
+    const int centre = world.chunkIndexOf(worldX);
+    for (int index = centre - radius; index <= centre + radius; ++index) {
+        if (world.hasChunk(index)) continue;
+        Chunk& chunk = world.chunk(index);
+        generateChunk(index, chunk);
+    }
+}
+
+// -- The hand-made test scenes ----------------------------------------------
+
 void buildTestScene(World& world) {
-    const int width = world.width();
+    const int width = TEST_SCENE_WIDTH;
     const int height = world.height();
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildGround(world);
 
     // Something to walk into, something to jump over, and something to stand in.
     // The wall is short enough to jump with a well-timed leap, so it stops you
     // walking but does not wall off half the level.
-    buildWall(world, width * 22 / 100, surfaceRow(width * 22 / 100, height), 4, 16);
+    buildWall(world, width * 22 / 100, testSurfaceRow(width * 22 / 100, height), 4, 16);
     buildGap(world, width * 64 / 100, 10, 18);
     buildSandPit(world, width * 56 / 100, 26, 12);
 
     // A column of sand hanging in the air above the ground. It falls and spreads
     // into a heap you can walk up, which is the point.
     const int columnCenter = width / 2;
-    const int columnBottom = surfaceRow(columnCenter, height) - 44;
+    const int columnBottom = testSurfaceRow(columnCenter, height) - 44;
     for (int y = columnBottom - 50; y <= columnBottom; ++y) {
         for (int x = columnCenter - 14; x <= columnCenter + 14; ++x) {
             world.set(x, y, Mat::Sand);
@@ -201,7 +623,7 @@ void buildTestScene(World& world) {
 
     // A gravel heap on the left: also falls and settles into a slope.
     const int heapCenter = width / 6;
-    const int heapBase = surfaceRow(heapCenter, height);
+    const int heapBase = testSurfaceRow(heapCenter, height);
     for (int dx = -30; dx <= 30; ++dx) {
         const int rise = 30 - std::abs(dx);
         for (int dy = 0; dy < rise; ++dy) {
@@ -211,7 +633,7 @@ void buildTestScene(World& world) {
 
     // A bank of soil on the right third, to show a looser, darker ground.
     const int bankCenter = width * 3 / 5;
-    const int bankBase = surfaceRow(bankCenter, height);
+    const int bankBase = testSurfaceRow(bankCenter, height);
     for (int dx = -25; dx <= 25; ++dx) {
         const int rise = 18 - std::abs(dx) / 2;
         for (int dy = 0; dy < rise; ++dy) {
@@ -224,7 +646,7 @@ void buildTestScene(World& world) {
     const int poolHalf = 42;
     for (int dx = -poolHalf; dx < poolHalf; ++dx) {
         const int x = poolCenter + dx;
-        const int surface = surfaceRow(x, height);
+        const int surface = testSurfaceRow(x, height);
         const int depth = 10 + (poolHalf - std::abs(dx)) / 3;
         for (int y = surface; y < surface + depth; ++y) {
             world.set(x, y, Mat::Air);
@@ -232,7 +654,7 @@ void buildTestScene(World& world) {
     }
     for (int dx = -poolHalf; dx < poolHalf; ++dx) {
         const int x = poolCenter + dx;
-        const int surface = surfaceRow(x, height);
+        const int surface = testSurfaceRow(x, height);
         for (int y = surface; y < surface + 7; ++y) {
             world.set(x, y, Mat::Water);
         }
@@ -241,7 +663,7 @@ void buildTestScene(World& world) {
     // An oil slick floating on the left of the pool. Oil is lighter than water,
     // so the simulation sorts the two out and the oil rises to the surface.
     for (int x = poolCenter - 26; x < poolCenter - 6; ++x) {
-        const int surface = surfaceRow(x, height);
+        const int surface = testSurfaceRow(x, height);
         for (int y = surface; y < surface + 3; ++y) {
             world.set(x, y, Mat::Oil);
         }
@@ -249,9 +671,9 @@ void buildTestScene(World& world) {
 
     // Two trees and a fallen log, to burn. The trunks are shorter than the
     // player can jump, so they are scenery rather than barriers.
-    buildTree(world, width * 42 / 100, surfaceRow(width * 42 / 100, height), 20, 13);
-    buildTree(world, width * 90 / 100, surfaceRow(width * 90 / 100, height), 16, 10);
-    buildLog(world, width * 84 / 100, width * 84 / 100 + 18, surfaceRow(width * 84 / 100, height));
+    buildTree(world, width * 42 / 100, testSurfaceRow(width * 42 / 100, height), 20, 13);
+    buildTree(world, width * 90 / 100, testSurfaceRow(width * 90 / 100, height), 16, 10);
+    buildLog(world, width * 84 / 100, width * 84 / 100 + 18, testSurfaceRow(width * 84 / 100, height));
 
     // A lava pool in its own stone cup, walled off from the pond. Break the
     // ground between them and the water crusts the lava into stone.
@@ -260,20 +682,20 @@ void buildTestScene(World& world) {
     // A seam of sulfur buried just below the lava pool. Nothing happens until
     // lava finds its way down to it - then the ground blows.
     buildSulfurSeam(world, width * 29 / 100, width * 34 / 100,
-                    surfaceRow(width * 31 / 100, height) + 10, 2);
+                    testSurfaceRow(width * 31 / 100, height) + 10, 2);
 
     // Snow on the far left, a pile of ash to be washed away, and a block of
     // glacial ice buried under the sand column.
-    buildSnowBank(world, width * 3 / 100, surfaceRow(width * 3 / 100, height), 12);
-    buildAshPile(world, width * 37 / 100, surfaceRow(width * 37 / 100, height), 8);
-    buildIceBlock(world, width / 2, surfaceRow(width / 2, height) + 12, 12, 14);
+    buildSnowBank(world, width * 3 / 100, testSurfaceRow(width * 3 / 100, height), 12);
+    buildAshPile(world, width * 37 / 100, testSurfaceRow(width * 37 / 100, height), 8);
+    buildIceBlock(world, width / 2, testSurfaceRow(width / 2, height) + 12, 12, 14);
 }
 
 void buildBurnTestScene(World& world) {
-    const int width = world.width();
+    const int width = TEST_SCENE_WIDTH;
     const int height = world.height();
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, height - 6);
 
     // A standing block of wood, lit at the bottom centre.
@@ -288,10 +710,11 @@ void buildBurnTestScene(World& world) {
 }
 
 void buildDropTestScene(World& world) {
-    const int cx = world.width() / 2;
+    const int width = TEST_SCENE_WIDTH;
+    const int cx = width / 2;
     const int bottom = world.height() - 60;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, world.height() - 4);
 
     // A block of sand hanging well above the floor.
@@ -303,10 +726,11 @@ void buildDropTestScene(World& world) {
 }
 
 void buildLavaWaterScene(World& world, int lavaHalfWidth) {
-    const int cx = world.width() / 2;
+    const int width = TEST_SCENE_WIDTH;
+    const int cx = width / 2;
     const int bottom = world.height() - 31;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, world.height() - 30);
 
     // A stone-walled well: lava at the bottom, water on top of it. Water is the
@@ -324,10 +748,11 @@ void buildLavaWaterScene(World& world, int lavaHalfWidth) {
 }
 
 void buildIceMeltsScene(World& world) {
-    const int cx = world.width() / 2;
+    const int width = TEST_SCENE_WIDTH;
+    const int cx = width / 2;
     const int bottom = world.height() - 31;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, world.height() - 30);
 
     // A block of glacial ice and a bank of snow, each with flame pressed into it.
@@ -342,48 +767,51 @@ void buildIceMeltsScene(World& world) {
 }
 
 void buildMudScene(World& world) {
+    const int width = TEST_SCENE_WIDTH;
     const int height = world.height();
     const int floorTop = height - 40;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, floorTop);
 
     // Stone walls on either side, soil in the bottom, water soaking onto it.
     for (int y = floorTop - 30; y < floorTop; ++y) {
         for (int x = 40; x < 46; ++x) world.set(x, y, Mat::Stone);
-        for (int x = world.width() - 46; x < world.width() - 40; ++x) world.set(x, y, Mat::Stone);
+        for (int x = width - 46; x < width - 40; ++x) world.set(x, y, Mat::Stone);
     }
     for (int y = floorTop - 10; y < floorTop; ++y) {
-        for (int x = 60; x < world.width() - 60; ++x) world.set(x, y, Mat::Soil);
+        for (int x = 60; x < width - 60; ++x) world.set(x, y, Mat::Soil);
     }
     for (int y = floorTop - 26; y < floorTop - 11; ++y) {
-        for (int x = 60; x < world.width() - 60; ++x) world.set(x, y, Mat::Water);
+        for (int x = 60; x < width - 60; ++x) world.set(x, y, Mat::Water);
     }
 }
 
 void buildAshScene(World& world) {
+    const int width = TEST_SCENE_WIDTH;
     const int floorTop = world.height() - 40;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, floorTop);
 
     for (int y = floorTop - 30; y < floorTop; ++y) {
         for (int x = 40; x < 46; ++x) world.set(x, y, Mat::Stone);
-        for (int x = world.width() - 46; x < world.width() - 40; ++x) world.set(x, y, Mat::Stone);
+        for (int x = width - 46; x < width - 40; ++x) world.set(x, y, Mat::Stone);
     }
     for (int y = floorTop - 10; y < floorTop; ++y) {
-        for (int x = 60; x < world.width() - 60; ++x) world.set(x, y, Mat::Ash);
+        for (int x = 60; x < width - 60; ++x) world.set(x, y, Mat::Ash);
     }
     for (int y = floorTop - 26; y < floorTop - 11; ++y) {
-        for (int x = 60; x < world.width() - 60; ++x) world.set(x, y, Mat::Water);
+        for (int x = 60; x < width - 60; ++x) world.set(x, y, Mat::Water);
     }
 }
 
 void buildOilScene(World& world) {
-    const int cx = world.width() / 2;
+    const int width = TEST_SCENE_WIDTH;
+    const int cx = width / 2;
     const int bottom = world.height() - 31;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, world.height() - 30);
 
     // Oil floating on lava. It should go up on the spot, fiercely.
@@ -396,10 +824,11 @@ void buildOilScene(World& world) {
 }
 
 void buildSulfurScene(World& world) {
-    const int cx = world.width() / 2;
+    const int width = TEST_SCENE_WIDTH;
+    const int cx = width / 2;
     const int bottom = world.height() - 31;
 
-    world.fill(Mat::Air);
+    world.fill(0, width - 1, Mat::Air);
     buildTestFloor(world, world.height() - 30);
 
     // A slab of packed dirt with a blob of sulfur crust buried in it, and a

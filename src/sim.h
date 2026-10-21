@@ -5,16 +5,6 @@
 
 #include "world.h"
 
-// The part of the grid the simulation works on this tick, in cells, inclusive at
-// both ends. Only the pixels near the player are simulated; the rest of the
-// world is held still until it comes into view.
-struct SimRect {
-    int x0;
-    int y0;
-    int x1;
-    int y1;
-};
-
 // The per-pixel physics. One call to step() advances the world by one tick:
 // reactions, then fire, then one movement pass over every mobile cell.
 //
@@ -52,7 +42,8 @@ class Simulation {
 public:
     explicit Simulation(const World& world);
 
-    // Advances the whole grid. Used by the self-tests, which build small worlds.
+    // Advances everything that exists. Used by the self-tests, which build
+    // small worlds.
     void step(World& world);
 
     // Advances just the region. Used by the game, so that the pixels a long way

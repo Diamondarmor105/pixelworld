@@ -75,6 +75,8 @@ PRD ref: `prd.md > The world, generation, and the camera`.
 
 ### Structures
 A small library of hand-authored shapes — a ruined wall, a fallen pillar, a tree, a giant tree, bushes and grass tufts, a buried ruin, bones — each stored as a tiny pattern of pixels, and **several variants per kind**. Placement is decided from the chunk's deterministic recipe (so it repeats identically for that chunk) and each structure is placed fully inside one chunk to avoid seams, sitting on the local ground level.
+
+One rule governs the trees: **the leaves reach all the way down, but the wood does not.** Only the trunk is wood, and it is narrow. A branch of wood hanging over the player's face at eye level stops them dead — they try to jump, bump their head on the branch, and drop straight back down again — so a tree must never have one. The leaves do nothing at all (the player pushes straight through them), so the player can walk into a tree, jump, and land on top of the trunk.
 PRD ref: `prd.md > The world, generation, and the camera`, `scope.md > POC Boundary` (hand-made structures with variations).
 
 ### Materials table

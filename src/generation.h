@@ -1,10 +1,57 @@
 #pragma once
 
+#include <vector>
+
 #include "world.h"
 
-// World generation. For now this builds hand-made scenes: the one to look at,
-// and the small scenes the self-test runs its checks against. The real endless
-// chunk generation replaces (and extends) this in slice 6.
+// World generation.
+//
+// Two kinds of world live here:
+//
+//   * The endless one. The world is cut into chunks of 256 columns, and each
+//     chunk is built from its own number by a recipe that always gives the
+//     same result. You can walk for ever and the terrain keeps arriving; walk
+//     back and the ground is exactly as you left it.
+//
+//   * The hand-made test scenes. Small, fixed scenes the self-test runs its
+//     checks against.
+
+// How wide the hand-made test scenes are.
+constexpr int TEST_SCENE_WIDTH = 480;
+
+// Where a hand-made structure was put, so a test can check that it stayed
+// inside its chunk.
+struct StructurePlacement {
+    int x;        // the world column of the pattern's left edge
+    int y;        // the world row of the pattern's BOTTOM edge
+    int width;    // how wide the pattern is
+    int height;   // how tall the pattern is
+    int kind;     // which kind of structure
+    int variant;  // which pattern of that kind
+};
+
+// -- The endless world -----------------------------------------------------
+
+// Builds the terrain for one chunk: the ground surface, the layers under it,
+// caves, pockets of loose material, a pond, a lava pool and the hand-made
+// structures that stand on it.
+//
+// The same chunk index always gives the same chunk, so the world can be
+// forgotten and built again identically. `placements` is optional: when it is
+// given, it is filled in with where the structures went.
+void generateChunk(int index, Chunk& chunk,
+                   std::vector<StructurePlacement>* placements = nullptr);
+
+// Builds every chunk near `worldX` that does not exist yet. The world is
+// endless, so this is called as the player explores.
+void generateChunksAround(World& world, int worldX, int radius);
+
+// The row of the ground surface at a world column: the first solid row. The
+// same column always gives the same row, so neighbouring chunks agree where
+// they meet.
+int groundRow(int worldX);
+
+// -- The hand-made test scenes ----------------------------------------------
 
 // The scene shown when the program runs: sky, layered ground, a sand column, a
 // gravel heap, a soil bank, a water pool with an oil slick, two trees, a fallen

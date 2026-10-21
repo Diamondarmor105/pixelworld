@@ -25,11 +25,10 @@ make clean        # remove build output
 | --- | --- |
 | `A` / `D` or ← / → | Walk left and right |
 | `Space` / `W` / `↑` | Jump (only from the ground) |
-| Left mouse | Set fire, to watch it spread (temporary debug brush — the real tools arrive in slice 7) |
-| `R` | Rebuild the scene (temporary, while the world is not generated yet) |
+| `1` / `2` / `3` | Choose a tool: spark wand, dynamite, acid flask |
+| Left mouse | Use the selected tool, aimed at the mouse |
+| `R` | Throw the world away and start again from the beginning |
 | `Esc` | Quit |
-
-The three tools arrive in a later slice (see `devpost/checklist.md`).
 
 ## Self-test
 
@@ -38,14 +37,14 @@ The three tools arrive in a later slice (see `devpost/checklist.md`).
 ./pixelworld --smoke      # opens the window, renders 60 frames, closes itself
 ```
 
-`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, spreads across a floor as a shallow heap and goes still, that even a whole lakeside of water reaches both sides of its floor and settles without losing a single cell, that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, that the player lands on the ground, jumps and comes back down, cannot walk through a stone wall but does plough through a small heap of grain — while a heavier heap of the same size stops them — and that the rendered image comes out the right size.
+`--selftest` is how each build slice is verified without you having to watch the screen. It checks the physics directly: that sand falls and settles with nothing floating, that water spreads out and stays inside its basin, spreads across a floor as a shallow heap and goes still, that even a whole lakeside of water reaches both sides of its floor and settles without losing a single cell, that fire spreads through a block of wood and burns it down to ash, that lava, water, ice, soil, ash, oil and sulfur all react the way they should, that the player lands on the ground, jumps and comes back down, cannot walk through a stone wall but does plough through a small heap of grain — while a heavier heap of the same size stops them — and that the endless world behaves: the same chunk always generates the same, the terrain differs from place to place, caves exist, every hand-made structure stays inside its own chunk, no tree hangs a branch over the player's head, and a hole you blow in the world is still there after you walk 50 chunks away and come back.
 
 ## Status
 
-Slice 5 of 8 complete: there is now a player. A 6×10 block with gravity walks left and right, jumps, lands on the ground, can be stopped by a wall, and is pushed up over small bumps instead of getting stuck on them. The camera follows with a small dead zone, so walking does not make the whole picture jitter, and it never looks above the sky or below the bottom of the world. Only the pixels near you are simulated — the rest of the world waits exactly as it was until you walk over to it.
+Slice 6 of 8 complete: **the world is endless**. It is made of 256-cell-wide chunks that are generated on demand as you walk and never thrown away, so the world keeps arriving and everything you destroy stays destroyed. The ground rolls through hills and snow-capped peaks, with caves and pockets of sand, gravel and clay underneath, ponds on the surface and lava pools in stone cups far below. Hand-made ruins, pillars, trees, giant trees, bushes, tufts and bones stand on the ground along the way.
 
-The level has grown to go with it: three screens wide, with a stone wall to walk into and jump over, a gap to jump, a sand pit to walk down into and stand in, and everything from slice 4 still there. Sand now hangs in the air and falls into a heap you can climb when the world starts. If you stand under it, you get buried — and climb back out.
+The trees follow one rule: the leaves reach all the way down, but the wood does not. Only the trunk is wood, and it is narrow, so you can walk into the leaves, jump, and land on top of the trunk instead of being stopped dead by a branch at eye level.
 
-Water now follows the same short rules as everything else: fall, roll down a slope, spread sideways. It runs downhill and spreads out across a floor, but it does not find a mathematically flat level — a poured lake settles as a broad, shallow heap, like a very slippery grain, with a few surface pixels shuffling. That is a deliberate choice: the rules stay short enough to explain in one breath.
+Only the pixels near you are simulated, and only the chunks near you are built, so the world stays quick however far you walk. Press `R` to throw the whole thing away and start again.
 
-The last big piece is next: the endless world. Progress lives in `devpost/checklist.md`.
+Next: the health bar, dying, and respawning — the last piece before the game is finished. Progress lives in `devpost/checklist.md`.

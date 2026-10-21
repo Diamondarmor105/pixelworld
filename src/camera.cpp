@@ -39,15 +39,13 @@ void GameCamera::follow(float worldX, float worldY) {
     viewY_ = static_cast<int>(y_);
 }
 
-void GameCamera::clamp(int worldWidth, int worldHeight) {
+void GameCamera::clamp(int worldHeight) {
     // Vertical: never look above the sky or below the bottom of the world.
     const float maxY = static_cast<float>(worldHeight - viewHeight_);
     y_ = std::clamp(y_, 0.0f, std::max(0.0f, maxY));
 
-    // Horizontal: only while the level is a fixed size. The endless world in
-    // slice 6 drops this, because there is always more world that way.
-    const float maxX = static_cast<float>(worldWidth - viewWidth_);
-    x_ = std::clamp(x_, 0.0f, std::max(0.0f, maxX));
+    // Horizontal: there is no limit. The world is endless that way round, so
+    // there is always more to see.
 
     viewX_ = static_cast<int>(x_);
     viewY_ = static_cast<int>(y_);

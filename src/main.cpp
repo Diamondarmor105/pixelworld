@@ -12,6 +12,7 @@
 #include "raylib.h"
 #include "render.h"
 #include "sim.h"
+#include "structures.h"
 #include "tools.h"
 #include "world.h"
 
@@ -21,13 +22,14 @@ constexpr int MAX_GRID_WIDTH = 480;
 constexpr int MAX_GRID_HEIGHT = 270;
 constexpr int PREFERRED_SCALE = 3;
 
-// The world is larger than the screen; the view scrolls over it.
-constexpr int WORLD_WIDTH_SCREENS = 3;
-constexpr int WORLD_HEIGHT_MARGIN = 48;
-
 // How far beyond the edge of the screen the simulation still runs, so material
 // arriving from off-screen has already settled by the time you see it.
 constexpr int SIM_MARGIN = 16;
+
+// How many chunks of world are kept built on each side of the player. Two
+// chunks is 512 cells - more than a screenful - so the ground is always there
+// before it comes into view.
+constexpr int CHUNK_RADIUS = 2;
 
 // Where the player starts: on the ground, near the left end of the level.
 constexpr float PLAYER_START_X = 100.0f;
@@ -89,33 +91,40 @@ int runGame(bool smoke) {
 
     const Viewport viewport = chooseViewport();
 
-    // The world is bigger than the screen: the view is a window into it. It is
-    // three screens wide, and a little taller than the view so there is
-    // somewhere to descend to and the camera has something to clamp against.
-    const int worldWidth = viewport.gridWidth * WORLD_WIDTH_SCREENS;
-    const int worldHeight = viewport.gridHeight + WORLD_HEIGHT_MARGIN;
+    // The world is endless sideways and a fixed height up and down. Only the
+    // chunks near the player are built, and only the pixels near the player
+    // are simulated; everything else waits, frozen, until it comes into view.
+    World world(World::DEFAULT_HEIGHT);
 
-    World world(worldWidth, worldHeight);
-    buildTestScene(world);
+    // Build the world around the start, so there is ground to stand on.
+    generateChunksAround(world, static_cast<int>(PLAYER_START_X), CHUNK_RADIUS);
 
     Simulation sim(world);
-    Renderer renderer(worldWidth, worldHeight);
+    Renderer renderer(viewport.gridWidth, viewport.gridHeight);
 
     GameCamera camera(viewport.gridWidth, viewport.gridHeight, PLAYER_START_X, 0.0f);
     Player player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
     camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
-    camera.clamp(world.width(), world.height());
+    camera.clamp(world.height());
 
     Tools tools;
 
     int frames = 0;
     while (!WindowShouldClose()) {
-        // Temporary: `R` rebuilds the scene and puts the player back, so it can
-        // be watched from the start.
+        // The world goes on for ever: build whatever is near the player that
+        // has not been built yet. Chunks that already exist are left alone, so
+        // everything the player has broken stays broken.
+        generateChunksAround(world, static_cast<int>(player.x() + Player::WIDTH * 0.5f),
+                             CHUNK_RADIUS);
+
+        // `R` throws the world away and starts again, so the demo can be
+        // watched from the very beginning.
         if (IsKeyPressed(KEY_R)) {
-            buildTestScene(world);
+            world.clearChunks();
             sim = Simulation(world);
+            generateChunksAround(world, static_cast<int>(PLAYER_START_X), CHUNK_RADIUS);
             player = Player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
+            camera = GameCamera(viewport.gridWidth, viewport.gridHeight, PLAYER_START_X, 0.0f);
         }
 
         // Tool selection.
@@ -130,7 +139,7 @@ int runGame(bool smoke) {
 
         player.tick(world, moveInput, jump);
         camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
-        camera.clamp(world.width(), world.height());
+        camera.clamp(world.height());
 
         // Fire tool on left click.
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -147,13 +156,13 @@ int runGame(bool smoke) {
         // Only the pixels near the player get simulated. Everything else waits,
         // exactly as it was, until it comes into view.
         const SimRect region{
-            std::max(0, camera.viewX() - SIM_MARGIN),
+            camera.viewX() - SIM_MARGIN,
             std::max(0, camera.viewY() - SIM_MARGIN),
-            std::min(world.width() - 1, camera.viewX() + viewport.gridWidth - 1 + SIM_MARGIN),
+            camera.viewX() + viewport.gridWidth - 1 + SIM_MARGIN,
             std::min(world.height() - 1, camera.viewY() + viewport.gridHeight - 1 + SIM_MARGIN)};
         sim.step(world, region);
 
-        renderer.updateImage(world);
+        renderer.updateImage(world, camera.viewX(), camera.viewY());
 
         const float offsetX = static_cast<float>(viewport.offsetX) -
                               static_cast<float>(camera.viewX() * viewport.scale);
@@ -162,8 +171,7 @@ int runGame(bool smoke) {
 
         BeginDrawing();
         ClearBackground(BLACK);
-        renderer.drawView(camera.viewX(), camera.viewY(), viewport.gridWidth, viewport.gridHeight,
-                          viewport.scale, viewport.offsetX, viewport.offsetY);
+        renderer.drawView(viewport.scale, viewport.offsetX, viewport.offsetY);
         player.draw(offsetX, offsetY, viewport.scale);
         // Draw projectiles.
         for (const auto& p : tools.projectiles()) {
@@ -179,9 +187,9 @@ int runGame(bool smoke) {
 
         ++frames;
         if (smoke && frames >= 60) {
-            std::printf("window %dx%d (render %dx%d) | view %dx%d | world %dx%d | scale %d | frames %d\n",
+            std::printf("window %dx%d (render %dx%d) | view %dx%d | world height %d | scale %d | frames %d\n",
                         GetScreenWidth(), GetScreenHeight(), GetRenderWidth(), GetRenderHeight(),
-                        viewport.gridWidth, viewport.gridHeight, worldWidth, worldHeight,
+                        viewport.gridWidth, viewport.gridHeight, world.height(),
                         viewport.scale, frames);
             TakeScreenshot("smoke.png");
 
@@ -208,7 +216,7 @@ int runGame(bool smoke) {
 
 // Self-test: sand must fall and settle, leaving nothing floating.
 bool checkSandSettles() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildDropTestScene(world);
 
     int startTop = MAX_GRID_HEIGHT;
@@ -242,8 +250,8 @@ bool checkSandSettles() {
 // Self-test: water must spread out when poured in one place, keep its volume,
 // and stay inside its basin.
 bool checkWaterSpreads() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    world.fill(Mat::Air);
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
     for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
         for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
     }
@@ -307,8 +315,8 @@ bool checkWaterSpreads() {
 // level to begin with, so the simple rules have nothing to spread and it must go
 // completely quiet.
 bool checkWaterSettlesStill() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    world.fill(Mat::Air);
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
     for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
         for (int y = 230; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
     }
@@ -345,7 +353,7 @@ bool checkWaterSettlesStill() {
     // liquid to see - run a stretch of ticks, and see if any of it moved. A cell
     // whose mass shifts by a hundredth is not visible motion; the check is for
     // the shimmering pool, which shows up as a cell crossing the visible line.
-    std::vector<uint8_t> before(world.cellCount());
+    std::vector<uint8_t> before(static_cast<size_t>(MAX_GRID_WIDTH) * MAX_GRID_HEIGHT);
     for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
         for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
             before[static_cast<size_t>(y) * MAX_GRID_WIDTH + x] =
@@ -376,8 +384,8 @@ bool checkWaterSettlesStill() {
 // and that the pile is smooth: no column may poke up more than a couple of rows
 // above its neighbours, which is what a stuck or ragged surface looks like.
 bool checkWaterSpreadsFlat() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    world.fill(Mat::Air);
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
 
     // A long flat stone floor, and a shallow pool poured onto part of it - a
     // thin layer, which is exactly where a ragged surface used to appear.
@@ -434,8 +442,8 @@ bool checkBigLakeLevelsAndSettles() {
     // A smaller grid than the full screen, so the check stays fast, but still a
     // genuinely wide, deep body of water with a large settled interior.
     const int W = 320, H = MAX_GRID_HEIGHT;
-    World world(W, H);
-    world.fill(Mat::Air);
+    World world(H);
+    world.fill(0, W - 1, Mat::Air);
     for (int x = 0; x < W; ++x) {
         for (int y = 240; y < H; ++y) world.set(x, y, Mat::Stone);
     }
@@ -445,10 +453,19 @@ bool checkBigLakeLevelsAndSettles() {
         const int top = (x < W / 3) ? 200 : 224;
         for (int y = top; y < 240; ++y) world.set(x, y, Mat::Water);
     }
+    // Walls at each end of the scene. The world is endless sideways now, so
+    // without them the lake would wander off and spread over the whole
+    // countryside instead of settling into a pool.
+    for (int y = 190; y < 240; ++y) {
+        world.set(-1, y, Mat::Stone);
+        world.set(W, y, Mat::Stone);
+    }
     const float startMass = world.totalMass(Mat::Water);
 
+    // Only the scene is simulated, so the check stays quick.
+    const SimRect scene{0, 0, W - 1, H - 1};
     Simulation sim(world);
-    for (int i = 0; i < 600; ++i) sim.step(world);
+    for (int i = 0; i < 600; ++i) sim.step(world, scene);
 
     // Spread: the water must reach both ends of the floor, not stay in a heap.
     int leftmost = W, rightmost = -1;
@@ -480,13 +497,13 @@ bool checkBigLakeLevelsAndSettles() {
     // mass transfer counts as movement only when it changes which material is in
     // a cell - the tiny equalising flows that continue at the surface are not
     // churn, they are the pool holding its level.
-    std::vector<uint8_t> before(world.cellCount());
+    std::vector<uint8_t> before(static_cast<size_t>(W) * H);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             before[static_cast<size_t>(y) * W + x] = static_cast<uint8_t>(world.at(x, y));
         }
     }
-    for (int i = 0; i < 60; ++i) sim.step(world);
+    for (int i = 0; i < 60; ++i) sim.step(world, scene);
     int moved = 0;
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
@@ -508,7 +525,7 @@ bool checkBigLakeLevelsAndSettles() {
 // Self-test: fire must spread through a block of wood, burn it down and go out,
 // leaving ash behind.
 bool checkFireSpreads() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildBurnTestScene(world);
 
     const int startWood = world.count(Mat::Wood);
@@ -530,7 +547,7 @@ bool checkFireSpreads() {
 // Self-test: lava meeting water crusts over into stone, and a body of lava deep
 // enough to matter cools into obsidian instead.
 bool checkLavaWater() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
 
     buildLavaWaterScene(world, 1);  // a thin trickle
     const int lavaBefore = world.count(Mat::Lava);
@@ -552,7 +569,7 @@ bool checkLavaWater() {
 
 // Self-test: snow and glacial ice next to flame both turn into water.
 bool checkIceMelts() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildIceMeltsScene(world);
 
     const int iceBefore = world.count(Mat::GlacialIce) + world.count(Mat::Snow);
@@ -568,7 +585,7 @@ bool checkIceMelts() {
 
 // Self-test: water soaking into soil softens it into mud.
 bool checkWaterSoilMud() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildMudScene(world);
 
     const int soilBefore = world.count(Mat::Soil);
@@ -584,7 +601,7 @@ bool checkWaterSoilMud() {
 
 // Self-test: water washing over ash carries it off rather than leaving it be.
 bool checkAshDissolves() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildAshScene(world);
 
     const int ashBefore = world.count(Mat::Ash);
@@ -599,7 +616,7 @@ bool checkAshDissolves() {
 
 // Self-test: oil touching lava goes up on the spot, fiercely.
 bool checkOilIgnites() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildOilScene(world);
 
     const int oilBefore = world.count(Mat::Oil);
@@ -615,7 +632,7 @@ bool checkOilIgnites() {
 
 // Self-test: lava reaching sulfur crust blows a crater out of the dirt above it.
 bool checkSulfurExplodes() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildSulfurScene(world);
 
     const int dirtBefore = world.count(Mat::PackedDirt);
@@ -642,8 +659,8 @@ int countInColumn(const World& world, Mat m, int x, int y0, int y1) {
 // Self-test: an explosion breaks stone. The sulfur blast used to be too weak to
 // touch it, which is what "sulfur explosions are not breaking stone" meant.
 bool checkBlastBreaksStone() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    world.fill(Mat::PackedDirt);
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::PackedDirt);
     for (int y = 100; y <= 120; ++y) {
         for (int x = 60; x <= 70; ++x) world.set(x, y, Mat::Stone);
     }
@@ -666,8 +683,8 @@ bool checkBlastBreaksStone() {
 
 // Self-test: a wall the blast cannot break shields everything behind it.
 bool checkBlastStopsAtWall() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    world.fill(Mat::PackedDirt);
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::PackedDirt);
     for (int y = 90; y <= 130; ++y) world.set(200, y, Mat::Bedrock);
 
     BlastOptions options;
@@ -686,10 +703,10 @@ bool checkBlastStopsAtWall() {
 // Self-test: breaking a wall costs the blast its energy. The same blast in the
 // open digs a bigger hole than the same blast with a stone wall in the way.
 bool checkWallCostsBlastEnergy() {
-    World open(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    World walled(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    open.fill(Mat::PackedDirt);
-    walled.fill(Mat::PackedDirt);
+    World open(MAX_GRID_HEIGHT);
+    World walled(MAX_GRID_HEIGHT);
+    open.fill(0, MAX_GRID_WIDTH - 1, Mat::PackedDirt);
+    walled.fill(0, MAX_GRID_WIDTH - 1, Mat::PackedDirt);
     for (int y = 90; y <= 130; ++y) {
         walled.set(52, y, Mat::Stone);
         walled.set(53, y, Mat::Stone);
@@ -718,10 +735,16 @@ bool checkWallCostsBlastEnergy() {
 }
 
 // A flat stone floor across the bottom of a player test scene.
+//
+// The floor is wider than the grid the self-test renders, because the world is
+// endless sideways now: the player can keep walking, and the floor has to keep
+// up with them.
+constexpr int PLAYER_TEST_WIDTH = 960;
+
 void buildPlayerTestFloor(World& world, int floorTop) {
-    world.fill(Mat::Air);
+    world.fill(0, PLAYER_TEST_WIDTH - 1, Mat::Air);
     for (int y = floorTop; y < world.height(); ++y) {
-        for (int x = 0; x < world.width(); ++x) world.set(x, y, Mat::Stone);
+        for (int x = 0; x < PLAYER_TEST_WIDTH; ++x) world.set(x, y, Mat::Stone);
     }
 }
 
@@ -730,7 +753,7 @@ constexpr int PLAYER_TEST_FLOOR = MAX_GRID_HEIGHT - 20;
 // Self-test: dropped onto the floor, the player falls, lands on top of it and
 // stays exactly there.
 bool checkPlayerRestsOnGround() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
 
     Player player(100.0f, 40.0f);
@@ -749,7 +772,7 @@ bool checkPlayerRestsOnGround() {
 // Self-test: a jump carries the player up, and they come back down to the same
 // row they started from.
 bool checkPlayerJumpsAndLands() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
 
     Player player(100.0f, 40.0f);
@@ -771,7 +794,7 @@ bool checkPlayerJumpsAndLands() {
 
 // Self-test: walking into a stone wall stops the player on the near side of it.
 bool checkPlayerBlockedByStone() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
 
     const int wallLeft = 140;
@@ -796,7 +819,7 @@ bool checkPlayerBlockedByStone() {
 // Self-test: walking into a small, light heap of loose grain shoves it forward
 // rather than being stopped by it - the player ploughs through.
 bool checkPlayerPushesSand() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
 
     const int heapX = 140;
@@ -809,14 +832,14 @@ bool checkPlayerPushesSand() {
     for (int i = 0; i < 600; ++i) player.tick(world, 0.0f, false);
 
     int rightBefore = -1;
-    for (int x = 0; x < world.width(); ++x)
+    for (int x = 0; x < PLAYER_TEST_WIDTH; ++x)
         for (int y = 0; y < PLAYER_TEST_FLOOR; ++y)
             if (world.at(x, y) == Mat::Snow) rightBefore = std::max(rightBefore, x);
 
     for (int i = 0; i < 600; ++i) player.tick(world, 1.0f, false);
 
     int rightAfter = -1;
-    for (int x = 0; x < world.width(); ++x)
+    for (int x = 0; x < PLAYER_TEST_WIDTH; ++x)
         for (int y = 0; y < PLAYER_TEST_FLOOR; ++y)
             if (world.at(x, y) == Mat::Snow) rightAfter = std::max(rightAfter, x);
 
@@ -830,7 +853,7 @@ bool checkPlayerPushesSand() {
 // heavy gravel that is the same size as the snow one above stops the player,
 // because the total weight is beyond what they can shift.
 bool checkHeavyHeapStopsPlayer() {
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildPlayerTestFloor(world, PLAYER_TEST_FLOOR);
 
     const int heapX = 140;
@@ -870,8 +893,8 @@ bool checkHeavyHeapStopsPlayer() {
 // are far apart and the check is not a close call.
 bool checkWaterStopsPulsing() {
     const int W = 480, H = MAX_GRID_HEIGHT;
-    World world(W, H);
-    world.fill(Mat::Air);
+    World world(H);
+    world.fill(0, W - 1, Mat::Air);
     for (int x = 0; x < W; ++x) {
         for (int y = 200; y < H; ++y) world.set(x, y, Mat::Stone);
     }
@@ -934,8 +957,8 @@ bool checkWaterStopsPulsing() {
 // settled world must move none.
 bool checkSettledSceneStaysStill() {
     const int W = 720, H = MAX_GRID_HEIGHT;   // wide enough to pan a real window
-    World world(W, H);
-    world.fill(Mat::Air);
+    World world(H);
+    world.fill(0, W - 1, Mat::Air);
     for (int x = 0; x < W; ++x) {
         for (int y = 230; y < H; ++y) world.set(x, y, Mat::Stone);
     }
@@ -960,7 +983,7 @@ bool checkSettledSceneStaysStill() {
 
     // Snapshot, then pan a 480-wide window across the scene the way the camera
     // does, stepping only the region each time.
-    std::vector<uint8_t> before(world.cellCount());
+    std::vector<uint8_t> before(static_cast<size_t>(W) * H);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             before[static_cast<size_t>(y) * W + x] = static_cast<uint8_t>(world.at(x, y));
@@ -997,16 +1020,190 @@ bool checkSettledSceneStaysStill() {
     return passed;
 }
 
+// -- The endless world -----------------------------------------------------
+
+// Self-test: generating the same chunk twice must give exactly the same
+// chunk, or the world would change shape when you walked away and came back.
+bool checkChunksAreDeterministic() {
+    const int height = 512;
+    Chunk first(height);
+    Chunk second(height);
+    generateChunk(7, first);
+    generateChunk(7, second);
+
+    const bool same = first.cells == second.cells && first.mass == second.mass;
+    std::printf("chunks are deterministic: %s\n", same ? "PASS" : "FAIL");
+    return same;
+}
+
+// Self-test: the ground must not be a flat line. Across a run of chunks the
+// surface should rise and fall by a good many rows, with high ground in there.
+bool checkTerrainVaries() {
+    int lowest = 1000000;
+    int highest = -1000000;
+    for (int i = 0; i < 40; ++i) {
+        const int row = groundRow(i * Chunk::WIDTH + Chunk::WIDTH / 2);
+        lowest = std::min(lowest, row);
+        highest = std::max(highest, row);
+    }
+    const bool passed = highest - lowest >= 20;
+    std::printf("terrain varies: %s (ground between row %d and row %d over 40 chunks)\n",
+                passed ? "PASS" : "FAIL", lowest, highest);
+    return passed;
+}
+
+// Self-test: every chunk must have caves in it - air under the surface.
+bool checkCavesExist() {
+    World world(512);
+    const int chunks = 20;
+    int withCaves = 0;
+    for (int i = 0; i < chunks; ++i) {
+        Chunk& chunk = world.chunk(i);
+        generateChunk(i, chunk);
+        const int height = static_cast<int>(chunk.cells.size() / Chunk::WIDTH);
+        int air = 0;
+        for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
+            const int surface = groundRow(i * Chunk::WIDTH + lx);
+            for (int y = surface + 12; y < height - 4; ++y) {
+                if (chunk.cells[chunk.index(lx, y)] == static_cast<uint8_t>(Mat::Air)) ++air;
+            }
+        }
+        if (air > 0) ++withCaves;
+    }
+    const bool passed = withCaves == chunks;
+    std::printf("caves exist: %s (%d of %d chunks have air under the surface)\n",
+                passed ? "PASS" : "FAIL", withCaves, chunks);
+    return passed;
+}
+
+// Self-test: a hand-made structure must sit entirely inside its own chunk, or
+// it would be cut in half by the chunk boundary. And it must really be drawn:
+// the material in the chunk has to match the pattern.
+bool checkStructuresStayInTheirChunk() {
+    World world(512);
+    int total = 0;
+    int outside = 0;
+    int wrong = 0;
+    for (int i = 0; i < 12; ++i) {
+        Chunk& chunk = world.chunk(i);
+        std::vector<StructurePlacement> placements;
+        generateChunk(i, chunk, &placements);
+
+        const int chunkLeft = i * Chunk::WIDTH;
+        const int chunkRight = chunkLeft + Chunk::WIDTH - 1;
+        for (const StructurePlacement& p : placements) {
+            ++total;
+            if (p.x < chunkLeft || p.x + p.width - 1 > chunkRight) ++outside;
+
+            const StructurePattern& pattern = structurePattern(p.kind, p.variant);
+            const int patternHeight = pattern.rowCount;
+
+            for (int row = 0; row < patternHeight; ++row) {
+                const char* line = pattern.rows[row];
+                const int worldY = p.y - (patternHeight - 1 - row);
+                for (int column = 0; line[column] != '\0'; ++column) {
+                    const Mat expected = structureMaterial(line[column]);
+                    if (expected == Mat::Air) continue;
+                    const int worldX = p.x + column;
+                    if (world.at(worldX, worldY) != expected) ++wrong;
+                }
+            }
+        }
+    }
+    const bool passed = total > 0 && outside == 0 && wrong == 0;
+    std::printf("structures stay in their chunk: %s (%d structures, %d outside, %d wrong pixels)\n",
+                passed ? "PASS" : "FAIL", total, outside, wrong);
+    return passed;
+}
+
+// Self-test: a tree must not have a branch hanging over the player's head.
+//
+// A branch of wood at head height stops the player dead: they walk into the
+// tree, try to jump, bump their head on the branch and drop straight back
+// down again, and can never get past it. So the only wood in the bottom of a
+// tree may be the trunk itself, in the same columns all the way down. The
+// leaves may be anywhere: you push straight through them.
+bool checkTreesDoNotBlockHeads() {
+    int trees = 0;
+    int offenders = 0;
+    for (int kind = 0; kind < structureKindCount(); ++kind) {
+        const StructureSet& set = structureKind(kind);
+        if (std::strcmp(set.kind, "tree") != 0 && std::strcmp(set.kind, "giant tree") != 0) {
+            continue;
+        }
+        for (int variant = 0; variant < set.count; ++variant) {
+            const StructurePattern& pattern = structurePattern(kind, variant);
+            ++trees;
+
+            // The trunk: the wood along the very bottom row.
+            const char* bottom = pattern.rows[pattern.rowCount - 1];
+            int trunkLeft = -1;
+            int trunkRight = -1;
+            for (int c = 0; bottom[c] != '\0'; ++c) {
+                const Mat m = structureMaterial(bottom[c]);
+                if (m != Mat::Wood && m != Mat::Bark) continue;
+                if (trunkLeft < 0) trunkLeft = c;
+                trunkRight = c;
+            }
+            if (trunkLeft < 0) {
+                ++offenders;   // a tree with no trunk to climb
+                continue;
+            }
+
+            // Any wood within reach of the player's head has to be in the
+            // trunk's columns, or the player cannot get past it.
+            for (int row = std::max(0, pattern.rowCount - 12); row < pattern.rowCount; ++row) {
+                const char* line = pattern.rows[row];
+                for (int c = 0; line[c] != '\0'; ++c) {
+                    const Mat m = structureMaterial(line[c]);
+                    if (m != Mat::Wood && m != Mat::Bark) continue;
+                    if (c < trunkLeft || c > trunkRight) ++offenders;
+                }
+            }
+        }
+    }
+    const bool passed = trees > 0 && offenders == 0;
+    std::printf("trees do not hang over the player's head: %s (%d trees, %d offending branches)\n",
+                passed ? "PASS" : "FAIL", trees, offenders);
+    return passed;
+}
+
+// Self-test: what you break stays broken. Blow a hole in one chunk, build
+// fifty more chunks of world, and the hole must still be there.
+bool checkDamageSurvives() {
+    World world(512);
+    Chunk& chunk = world.chunk(3);
+    generateChunk(3, chunk);
+
+    const int worldX = 3 * Chunk::WIDTH + 100;
+    const int y = groundRow(worldX) + 2;
+    const bool wasSolid = world.at(worldX, y) != Mat::Air;
+    world.set(worldX, y, Mat::Air);
+
+    // Build a lot more world, far away.
+    for (int i = 0; i < 60; ++i) {
+        if (world.hasChunk(i)) continue;
+        Chunk& c = world.chunk(i);
+        generateChunk(i, c);
+    }
+
+    const bool stillGone = world.at(worldX, y) == Mat::Air;
+    const bool passed = wasSolid && stillGone;
+    std::printf("damage survives: %s (the hole at column %d is still there)\n",
+                passed ? "PASS" : "FAIL", worldX);
+    return passed;
+}
+
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
     bool passed = true;
 
-    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World world(MAX_GRID_HEIGHT);
     buildTestScene(world);
 
     Renderer renderer(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
-    renderer.updateImage(world);
+    renderer.updateImage(world, 0, 0);
     ExportImage(renderer.image(), "selftest.png");
 
     std::printf("grid %dx%d | wrote selftest.png\n", renderer.image().width, renderer.image().height);
@@ -1044,6 +1241,14 @@ int runSelfTest() {
     if (!checkPlayerBlockedByStone()) passed = false;
     if (!checkPlayerPushesSand()) passed = false;
     if (!checkHeavyHeapStopsPlayer()) passed = false;
+
+    // The endless world.
+    if (!checkChunksAreDeterministic()) passed = false;
+    if (!checkTerrainVaries()) passed = false;
+    if (!checkCavesExist()) passed = false;
+    if (!checkStructuresStayInTheirChunk()) passed = false;
+    if (!checkTreesDoNotBlockHeads()) passed = false;
+    if (!checkDamageSurvives()) passed = false;
 
     return passed ? 0 : 1;
 }

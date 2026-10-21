@@ -14,8 +14,9 @@ public:
     // Scrolls to keep `worldX`/`worldY` inside the dead zone around the middle.
     void follow(float worldX, float worldY);
 
-    // Keeps the view inside the world vertically, and anywhere horizontally.
-    void clamp(int worldWidth, int worldHeight);
+    // Keeps the view inside the world vertically. There is no horizontal
+    // limit: the world goes on for ever sideways.
+    void clamp(int worldHeight);
 
     int viewX() const { return viewX_; }
     int viewY() const { return viewY_; }

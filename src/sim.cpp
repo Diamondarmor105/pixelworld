@@ -30,10 +30,6 @@ constexpr float kPressureMin = 1.0f / 16.0f;
 // from ever going fully quiet).
 constexpr float kSideShare = 0.45f;
 
-bool inRect(const SimRect& r, int x, int y) {
-    return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
-}
-
 // A repeatable pseudo-random value for one cell on one tick. The self-test
 // depends on scenes burning the same way every run.
 uint32_t noise(int x, int y, int frame) {
@@ -81,9 +77,6 @@ void spreadFire(World& world, int x, int y, int frame, bool includeDiagonals) {
 // - when their time runs out - turn into their `burnsInto` (ash for wood and
 // leaves, nothing for oil).
 void updateFire(World& world, const SimRect& region, int frame) {
-    const int width = world.width();
-    const int height = world.height();
-
     // Place a puff of smoke in the first air cell found scanning upward from
     // (cx, cy). Returns true if placed. Smoke prefers to rise; if nothing is
     // open above, it tries the sides.
@@ -103,9 +96,10 @@ void updateFire(World& world, const SimRect& region, int frame) {
         return false;
     };
 
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            if (!inRect(region, x, y)) continue;
+    // Only the pixels inside the region are looked at: a fire burning far
+    // off-screen is left exactly as it is until it comes into view.
+    for (int y = region.y0; y <= region.y1; ++y) {
+        for (int x = region.x0; x <= region.x1; ++x) {
             const Mat m = world.at(x, y);
             const uint8_t life = world.life(x, y);
 
@@ -136,9 +130,8 @@ void updateFire(World& world, const SimRect& region, int frame) {
     }
 
     // Smoke dissipates: lose a little mass each tick, and vanish when empty.
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            if (!inRect(region, x, y)) continue;
+    for (int y = region.y0; y <= region.y1; ++y) {
+        for (int x = region.x0; x <= region.x1; ++x) {
             if (world.at(x, y) != Mat::Smoke) continue;
             float m = world.mass(x, y) - 0.05f;
             if (m <= kMassEmpty) world.setMass(x, y, Mat::Air, 0.0f);
@@ -251,15 +244,11 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
 // Every pair of touching cells that knows about each other gets a chance to
 // react. Scanning right and down covers each pair exactly once.
 void applyReactions(World& world, const SimRect& region, int frame) {
-    const int width = world.width();
-    const int height = world.height();
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            if (!inRect(region, x, y)) continue;
+    for (int y = region.y0; y <= region.y1; ++y) {
+        for (int x = region.x0; x <= region.x1; ++x) {
             if (!canReact(world.at(x, y))) continue;
-            if (x + 1 < width) reactPair(world, x, y, x + 1, y, frame);
-            if (y + 1 < height) reactPair(world, x, y, x, y + 1, frame);
+            reactPair(world, x, y, x + 1, y, frame);
+            reactPair(world, x, y, x, y + 1, frame);
         }
     }
 }
@@ -499,13 +488,13 @@ Simulation::Simulation(const World& world) {
 }
 
 void Simulation::step(World& world) {
-    const SimRect all{0, 0, world.width() - 1, world.height() - 1};
-    step(world, all);
+    // Everything that exists: the self-tests build small worlds and want the
+    // whole of them simulated.
+    step(world, world.bounds());
 }
 
 void Simulation::step(World& world, const SimRect& region) {
-    const int width = world.width();
-    const int height = world.height();
+    if (region.x1 < region.x0 || region.y1 < region.y0) return;
 
     // Reactions first (lava crusts, ice melts, sulfur blows), then fire, then
     // movement.
@@ -516,11 +505,12 @@ void Simulation::step(World& world, const SimRect& region) {
     // `flowMass` for why a single mass-transfer pass replaced the two whole-cell
     // sweeps, and World::beginMassSnapshot for why the pass reads a start-of-tick
     // copy of the mass grid rather than the grid it is writing.
-    world.beginMassSnapshot();
-    float budget = static_cast<float>(width) * height * 0.5f;
-    for (int y = height - 1; y >= 0; --y) {
-        for (int x = 0; x < width; ++x) {
-            if (!inRect(region, x, y)) continue;
+    world.beginMassSnapshot(region);
+    const float area = static_cast<float>(region.x1 - region.x0 + 1) *
+                       static_cast<float>(region.y1 - region.y0 + 1);
+    float budget = area * 0.5f;
+    for (int y = region.y1; y >= region.y0; --y) {
+        for (int x = region.x0; x <= region.x1; ++x) {
             flowMass(world, x, y, budget);
         }
     }

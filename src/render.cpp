@@ -31,30 +31,31 @@ static Color getFireColor(uint8_t life, int x, int y) {
 
 }  // namespace
 
-Renderer::Renderer(int width, int height) {
-    image_ = GenImageColor(width, height, BLACK);
-}
+Renderer::Renderer(int width, int height)
+    : image_(GenImageColor(width, height, BLACK)), width_(width), height_(height) {}
 
 Renderer::~Renderer() {
     if (textureReady_) UnloadTexture(texture_);
     UnloadImage(image_);
 }
 
-void Renderer::updateImage(const World& world) {
+void Renderer::updateImage(const World& world, int worldX, int worldY) {
     Color* pixels = static_cast<Color*>(image_.data);
-    for (int y = 0; y < world.height(); ++y) {
-        for (int x = 0; x < world.width(); ++x) {
-            const Mat m = world.at(x, y);
-            const uint8_t life = world.life(x, y);
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const int cellX = worldX + x;
+            const int cellY = worldY + y;
+            const Mat m = world.at(cellX, cellY);
+            const uint8_t life = world.life(cellX, cellY);
 
             Color color;
             if (isBurning(m, life)) {
-                color = getFireColor(life, x, y);
+                color = getFireColor(life, cellX, cellY);
             } else {
                 color = materialInfo(m).color;
                 // Liquid/gas volumetric blending with ease-out.
                 if (materialInfo(m).flows || materialInfo(m).rises) {
-                    const float mass = world.mass(x, y);
+                    const float mass = world.mass(cellX, cellY);
                     const float full = mass > 1.0f ? 1.0f : (mass < 0.0f ? 0.0f : mass);
                     const Color air = materialInfo(Mat::Air).color;
                     // Linear blend with a minimum visibility floor so small
@@ -68,13 +69,12 @@ void Renderer::updateImage(const World& world) {
                 }
             }
 
-            pixels[static_cast<size_t>(y) * world.width() + x] = color;
+            pixels[static_cast<size_t>(y) * width_ + x] = color;
         }
     }
 }
 
-void Renderer::drawView(int worldX, int worldY, int viewWidth, int viewHeight,
-                        int scale, int offsetX, int offsetY) {
+void Renderer::drawView(int scale, int offsetX, int offsetY) {
     if (!textureReady_) {
         texture_ = LoadTextureFromImage(image_);
         SetTextureFilter(texture_, TEXTURE_FILTER_POINT);
@@ -83,10 +83,9 @@ void Renderer::drawView(int worldX, int worldY, int viewWidth, int viewHeight,
         UpdateTexture(texture_, image_.data);
     }
 
-    const Rectangle source{static_cast<float>(worldX), static_cast<float>(worldY),
-                           static_cast<float>(viewWidth), static_cast<float>(viewHeight)};
+    const Rectangle source{0.0f, 0.0f, static_cast<float>(width_), static_cast<float>(height_)};
     const Rectangle dest{static_cast<float>(offsetX), static_cast<float>(offsetY),
-                         static_cast<float>(viewWidth * scale),
-                         static_cast<float>(viewHeight * scale)};
+                         static_cast<float>(width_ * scale),
+                         static_cast<float>(height_ * scale)};
     DrawTexturePro(texture_, source, dest, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
 }

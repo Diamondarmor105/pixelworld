@@ -29,7 +29,7 @@ public:
     void fire(float sx, float sy, float tx, float ty);
 
     // Advance all projectiles one tick, applying effects on impact.
-    void tick(World& world, Simulation& sim);
+    void tick(World& world);
 
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
 

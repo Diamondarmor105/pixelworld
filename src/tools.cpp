@@ -1,5 +1,6 @@
 #include "tools.h"
 
+#include "blast.h"
 #include "materials.h"
 #include "sim.h"
 
@@ -59,7 +60,7 @@ void Tools::fire(float sx, float sy, float tx, float ty) {
     projectiles_.push_back(p);
 }
 
-void Tools::tick(World& world, Simulation& sim) {
+void Tools::tick(World& world) {
     if (cooldown_ > 0) --cooldown_;
 
     for (auto& p : projectiles_) {
@@ -150,140 +151,18 @@ void Tools::detonate(World& world, Projectile& p) {
                 if (world.at(x, y) == Mat::Water) ++waterCount;
             }
         }
-        bool underwater = (waterCount > total / 3);
-        int effectiveRadius = underwater ? radius / 2 : radius;
+        const bool underwater = (waterCount > total / 3);
 
-        // Line of sight helper (Bresenham).
-        auto hasLOS = [&](int x0, int y0, int x1, int y1) -> bool {
-            int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
-            int sx = (x0 < x1) ? 1 : -1;
-            int sy = (y0 < y1) ? 1 : -1;
-            int err = dx - dy;
-            int x = x0, y = y0;
-            while (true) {
-                if (x == x1 && y == y1) return true;
-                if (!(x == x0 && y == y0)) {
-                    Mat m = world.at(x, y);
-                    if (m != Mat::Air && !materialInfo(m).flows && !materialInfo(m).rises && m != Mat::Fire) {
-                        return false;
-                    }
-                }
-                int e2 = 2 * err;
-                if (e2 > -dy) { err -= dy; x += sx; }
-                if (e2 < dx) { err += dx; y += sy; }
-                if (x < 0 || y < 0 || x >= world.width() || y >= world.height()) return false;
-            }
-        };
-
-        // First pass: collect liquid moves.
-        struct LiquidMove { int x, y, tx, ty; Mat m; float mass; };
-        std::vector<LiquidMove> liquidMoves;
-        for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
-            for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
-                if (!world.inBounds(x, y)) continue;
-                int dx = x - cx, dy = y - cy;
-                float dist = std::sqrt((float)(dx*dx + dy*dy));
-                float angle = std::atan2((float)dy, (float)dx);
-                float jitter = 0.85f + 0.3f * std::sin(angle * 3.0f + (float)(rand() % 100) / 100.0f * 6.28f);
-                float effR = effectiveRadius * jitter;
-                if (dist > effR) continue;
-                if (!hasLOS(cx, cy, x, y)) continue; // blocked by wall
-                Mat m = world.at(x, y);
-                if (m == Mat::Bedrock) continue;
-                bool isLiquid = materialInfo(m).flows || materialInfo(m).rises;
-                if (!isLiquid) continue;
-                float nx = (dist < 0.1f) ? 0 : (float)dx / dist;
-                float ny = (dist < 0.1f) ? -1 : (float)dy / dist;
-                // Find first air cell along outward ray beyond blast.
-                int tx = x, ty = y;
-                for (int step = 1; step <= effectiveRadius + 4; ++step) {
-                    int nx2 = cx + (int)(nx * (dist + step));
-                    int ny2 = cy + (int)(ny * (dist + step));
-                    if (!world.inBounds(nx2, ny2)) break;
-                    if (world.at(nx2, ny2) == Mat::Air) { tx = nx2; ty = ny2; break; }
-                }
-                if (tx == x && ty == y) continue; // no place to go
-                float mass = world.mass(x, y);
-                if (mass <= 0) mass = 1.0f;
-                liquidMoves.push_back({x, y, tx, ty, m, mass});
-            }
-        }
-        // Apply liquid moves.
-        for (auto& lm : liquidMoves) {
-            Mat targetMat = world.at(lm.tx, lm.ty);
-            if (targetMat == Mat::Air) {
-                world.setMass(lm.tx, lm.ty, lm.m, lm.mass);
-            } else if (materialInfo(targetMat).flows || materialInfo(targetMat).rises) {
-                world.setMass(lm.tx, lm.ty, targetMat, world.mass(lm.tx, lm.ty) + lm.mass);
-            } else {
-                continue; // blocked, don't destroy
-            }
-            world.set(lm.x, lm.y, Mat::Air);
-        }
-        // Destroy solids based on energy (with line of sight).
-        for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
-            for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
-                if (!world.inBounds(x, y)) continue;
-                int dx = x - cx, dy = y - cy;
-                float dist = std::sqrt((float)(dx*dx + dy*dy));
-                // Randomize shape: per-cell radius jitter.
-                float angle = std::atan2((float)dy, (float)dx);
-                float jitter = 0.85f + 0.3f * std::sin(angle * 3.0f + (float)(rand() % 100) / 100.0f * 6.28f);
-                float effR = effectiveRadius * jitter;
-                if (dist > effR) continue;
-                if (!hasLOS(cx, cy, x, y)) continue; // blocked by wall
-                Mat m = world.at(x, y);
-                if (m == Mat::Bedrock) continue;
-                if (materialInfo(m).flows || materialInfo(m).rises) continue; // liquids handled
-                float energy = 1.0f - (dist / effR);
-                if (energy < 0) energy = 0;
-                int resist = materialInfo(m).blastResistance;
-                if ((int)(energy * 255.0f) > resist) {
-                    world.set(x, y, Mat::Air);
-                }
-            }
-        }
-        // Cover the entire blast area with fire.
-        if (!underwater) {
-            for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
-                for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
-                    if (!world.inBounds(x, y)) continue;
-                    int dx = x - cx, dy = y - cy;
-                    float dist = std::sqrt((float)(dx*dx + dy*dy));
-                    float angle = std::atan2((float)dy, (float)dx);
-                    float jitter = 0.85f + 0.3f * std::sin(angle * 3.0f + (float)(rand() % 100) / 100.0f * 6.28f);
-                    float effR = effectiveRadius * jitter;
-                    if (dist > effR) continue;
-                    if (!hasLOS(cx, cy, x, y)) continue;
-                    Mat m = world.at(x, y);
-                    if (m == Mat::Air || materialInfo(m).flammable) {
-                        // Fire strength based on distance from center.
-                        float dist = std::sqrt((float)(dx*dx + dy*dy));
-                        float strength = 1.0f - (dist / (float)effectiveRadius);
-                        if (strength < 0.1f) strength = 0.1f;
-                        world.set(x, y, Mat::Fire);
-                        world.setLife(x, y, (uint8_t)(FIRE_LIFE * strength * 2));
-                    }
-                }
-            }
-            // Spawn smoke at the blast site.
-            for (int i = 0; i < 24; ++i) {
-                int rx = cx + (rand() % 11) - 5;
-                int ry = cy - (rand() % 7);
-                if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-                    world.setMass(rx, ry, Mat::Smoke, 0.4f + (rand() % 60) / 100.0f);
-                }
-            }
-        } else {
-            // Underwater: spawn bubbles (smoke rising).
-            for (int i = 0; i < 12; ++i) {
-                int rx = cx + (rand() % 7) - 3;
-                int ry = cy - (rand() % 5);
-                if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-                    world.setMass(rx, ry, Mat::Smoke, 0.4f + (rand() % 40) / 100.0f);
-                }
-            }
-        }
+        // The same blast rules as every other explosion: the wave breaks the
+        // blocks in the line of sight first, then spends what is left of its
+        // energy on the next block along the line.
+        BlastOptions options;
+        options.radius = radius;
+        options.power = 1.0f;
+        options.underwater = underwater;
+        options.flames = !underwater;  // underwater it makes bubbles, not fire
+        options.smokePuffs = underwater ? 12 : 24;
+        blast(world, cx, cy, options);
     } else if (p.tool == Tool::AcidFlask) {
         // Splash acid in a pool.
         for (int dy = -2; dy <= 2; ++dy) {

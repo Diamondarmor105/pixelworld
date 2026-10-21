@@ -1,5 +1,7 @@
 #include "sim.h"
 
+#include "blast.h"
+
 #include <algorithm>
 
 namespace {
@@ -171,47 +173,17 @@ bool lavaIsDeep(const World& world, int x, int y) {
     return lava >= 24;
 }
 
-// A small explosion. Anything without much blast resistance is cleared out;
-// stone and everything harder mostly holds. The rim catches light.
-void explode(World& world, int cx, int cy, int radius) {
-    const int r2 = radius * radius;
-    for (int y = cy - radius; y <= cy + radius; ++y) {
-        for (int x = cx - radius; x <= cx + radius; ++x) {
-            if (!world.inBounds(x, y)) continue;
-            const int dx = x - cx;
-            const int dy = y - cy;
-            if (dx * dx + dy * dy > r2) continue;
-            const Mat m = world.at(x, y);
-            if (m == Mat::Bedrock) continue;
-            if (materialInfo(m).blastResistance > 60) continue;
-            world.set(x, y, Mat::Air);
-        }
-    }
-
-    // Fire at center and rim.
-    for (int y = cy - radius; y <= cy + radius; ++y) {
-        for (int x = cx - radius; x <= cx + radius; ++x) {
-            if (!world.inBounds(x, y)) continue;
-            const int dx = x - cx;
-            const int dy = y - cy;
-            const int d2 = dx * dx + dy * dy;
-            if (d2 > r2) continue;
-            Mat m = world.at(x, y);
-            if (m == Mat::Air || materialInfo(m).flammable) {
-                world.set(x, y, Mat::Fire);
-                world.setLife(x, y, FIRE_LIFE);
-            }
-        }
-    }
-
-    // Spawn smoke.
-    for (int i = 0; i < 8; ++i) {
-        int rx = cx + (rand() % 5) - 2;
-        int ry = cy - (rand() % 4);
-        if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-            world.setMass(rx, ry, Mat::Smoke, 0.4f + (rand() % 40) / 100.0f);
-        }
-    }
+// A small explosion, blown by lava reaching sulfur crust. It uses the same
+// rules as every other explosion in the game: the wave breaks the blocks in
+// the line of sight first, and what is left of the energy carries on to the
+// next block. A stone wall near the sulfur is broken; a wall the blast cannot
+// afford shields everything behind it.
+void explode(World& world, int cx, int cy) {
+    BlastOptions options;
+    options.radius = 8;
+    options.power = 0.9f;
+    options.smokePuffs = 8;
+    blast(world, cx, cy, options);
 }
 
 // One proximity rule, between the cell at (x, y) and the one touching it at
@@ -272,8 +244,8 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
     }
     if (info.flammable && hot == Mat::Lava) tryIgnite(world, hx, hy, frame);
 
-    // Lava reaching sulfur crust blows a small crater and lights the rim.
-    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy, 5);
+    // Lava reaching sulfur crust blows a crater and lights the rim.
+    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy);
 }
 
 // Every pair of touching cells that knows about each other gets a chance to

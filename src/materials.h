@@ -84,7 +84,8 @@ struct MaterialInfo {
     bool meltable;            // turns to `meltsInto` when fire or lava is adjacent
     Mat meltsInto;
     bool washedByWater;       // dissolves away when water is adjacent
-    uint8_t blastResistance;  // 0 = blown away easily, 255 = immune to explosions
+    int blastResistance;      // how much energy a block costs an explosion.
+                              // 0 = blown away easily, 9999 = never breaks.
     bool acidCorrodes;        // acid eats through this material
 };
 

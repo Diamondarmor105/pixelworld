@@ -4,6 +4,7 @@
 #include <limits>
 #include <vector>
 
+#include "blast.h"
 #include "camera.h"
 #include "generation.h"
 #include "materials.h"
@@ -76,24 +77,6 @@ Viewport chooseViewport() {
                     (framebufferHeight - gridHeight * scale) / 2};
 }
 
-// Temporary debug brush: sets fire where the mouse is held. The real tools
-// replace this in slice 7. Flame is only painted onto air or something that can
-// burn, so it does not carve holes in solid ground.
-void paintFire(World& world, int cx, int cy, int radius) {
-    for (int dy = -radius; dy <= radius; ++dy) {
-        for (int dx = -radius; dx <= radius; ++dx) {
-            if (dx * dx + dy * dy > radius * radius) continue;
-            const int x = cx + dx;
-            const int y = cy + dy;
-            const Mat m = world.at(x, y);
-            if (m == Mat::Air || materialInfo(m).flammable) {
-                world.set(x, y, Mat::Fire);
-                world.setLife(x, y, FIRE_LIFE);
-            }
-        }
-    }
-}
-
 // Opens the window and runs the main loop. In smoke mode it closes itself after
 // a fixed number of frames so it can be checked from the command line.
 int runGame(bool smoke) {
@@ -159,7 +142,7 @@ int runGame(bool smoke) {
             tools.fire(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, gx, gy);
         }
 
-        tools.tick(world, sim);
+        tools.tick(world);
 
         // Only the pixels near the player get simulated. Everything else waits,
         // exactly as it was, until it comes into view.
@@ -646,6 +629,94 @@ bool checkSulfurExplodes() {
     return passed;
 }
 
+// Counts the cells of one material in a column, so a test can ask "is the dirt
+// behind that wall still there?".
+int countInColumn(const World& world, Mat m, int x, int y0, int y1) {
+    int n = 0;
+    for (int y = y0; y <= y1; ++y) {
+        if (world.at(x, y) == m) ++n;
+    }
+    return n;
+}
+
+// Self-test: an explosion breaks stone. The sulfur blast used to be too weak to
+// touch it, which is what "sulfur explosions are not breaking stone" meant.
+bool checkBlastBreaksStone() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    world.fill(Mat::PackedDirt);
+    for (int y = 100; y <= 120; ++y) {
+        for (int x = 60; x <= 70; ++x) world.set(x, y, Mat::Stone);
+    }
+
+    const int stoneBefore = world.count(Mat::Stone);
+
+    // The sulfur blast: a small one, but strong enough for stone.
+    BlastOptions options;
+    options.radius = 8;
+    options.power = 0.9f;
+    options.smokePuffs = 0;
+    blast(world, 58, 110, options);
+
+    const int stoneAfter = world.count(Mat::Stone);
+    const bool passed = stoneAfter < stoneBefore;
+    std::printf("a blast breaks stone: %s (stone %d -> %d)\n",
+                passed ? "PASS" : "FAIL", stoneBefore, stoneAfter);
+    return passed;
+}
+
+// Self-test: a wall the blast cannot break shields everything behind it.
+bool checkBlastStopsAtWall() {
+    World world(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    world.fill(Mat::PackedDirt);
+    for (int y = 90; y <= 130; ++y) world.set(200, y, Mat::Bedrock);
+
+    BlastOptions options;
+    options.radius = 16;
+    options.power = 1.0f;  // the dynamite blast
+    options.smokePuffs = 0;
+    blast(world, 190, 110, options);
+
+    const int behind = countInColumn(world, Mat::PackedDirt, 205, 100, 120);
+    const bool passed = behind == 21 && world.count(Mat::Bedrock) == 41;
+    std::printf("a wall shields what is behind it: %s (dirt behind %d of 21, bedrock %d of 41)\n",
+                passed ? "PASS" : "FAIL", behind, world.count(Mat::Bedrock));
+    return passed;
+}
+
+// Self-test: breaking a wall costs the blast its energy. The same blast in the
+// open digs a bigger hole than the same blast with a stone wall in the way.
+bool checkWallCostsBlastEnergy() {
+    World open(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    World walled(MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    open.fill(Mat::PackedDirt);
+    walled.fill(Mat::PackedDirt);
+    for (int y = 90; y <= 130; ++y) {
+        walled.set(52, y, Mat::Stone);
+        walled.set(53, y, Mat::Stone);
+        walled.set(54, y, Mat::Stone);
+    }
+
+    BlastOptions options;
+    options.radius = 16;
+    options.power = 1.0f;
+    options.smokePuffs = 0;
+    blast(open, 50, 110, options);
+    blast(walled, 50, 110, options);
+
+    // The broken dirt is now air or flame, so count what is left instead.
+    const int openGone = open.count(Mat::PackedDirt);
+    const int walledGone = walled.count(Mat::PackedDirt);
+    const int behind = countInColumn(walled, Mat::PackedDirt, 56, 100, 120);
+
+    // The wall was chewed through, but it cost the blast enough that the dirt
+    // behind it survived.
+    const bool passed = walledGone > openGone && behind == 21;
+    std::printf("a wall costs the blast its energy: %s (dirt left open %d, walled %d, "
+                "dirt behind %d of 21)\n",
+                passed ? "PASS" : "FAIL", openGone, walledGone, behind);
+    return passed;
+}
+
 // A flat stone floor across the bottom of a player test scene.
 void buildPlayerTestFloor(World& world, int floorTop) {
     world.fill(Mat::Air);
@@ -965,6 +1036,9 @@ int runSelfTest() {
     if (!checkAshDissolves()) passed = false;
     if (!checkOilIgnites()) passed = false;
     if (!checkSulfurExplodes()) passed = false;
+    if (!checkBlastBreaksStone()) passed = false;
+    if (!checkBlastStopsAtWall()) passed = false;
+    if (!checkWallCostsBlastEnergy()) passed = false;
     if (!checkPlayerRestsOnGround()) passed = false;
     if (!checkPlayerJumpsAndLands()) passed = false;
     if (!checkPlayerBlockedByStone()) passed = false;

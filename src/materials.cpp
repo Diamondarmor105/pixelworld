@@ -15,11 +15,11 @@
 // Bright and friendly palette by design — see devpost/spec.md > Look and Feel.
 static const MaterialInfo kMaterials[] = {
     /* Air          */ {"Air",          { 150, 214, 247, 255 },   0, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,   0, false},
-    /* Bedrock      */ {"Bedrock",      {  58,  58,  66, 255 }, 255, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 255, false},
+    /* Bedrock      */ {"Bedrock",      {  58,  58,  66, 255 }, 255, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 9999, false},
     /* Stone        */ {"Stone",        { 130, 130, 138, 255 }, 250, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 120, true},
     /* Limestone    */ {"Limestone",    { 196, 190, 170, 255 }, 230, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 140, true},
-    /* Basalt       */ {"Basalt",       {  78,  80,  92, 255 }, 245, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 220, false},
-    /* Obsidian     */ {"Obsidian",     {  40,  32,  48, 255 }, 250, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 250, false},
+    /* Basalt       */ {"Basalt",       {  78,  80,  92, 255 }, 245, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 320, false},
+    /* Obsidian     */ {"Obsidian",     {  40,  32,  48, 255 }, 250, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 400, false},
     /* Bones        */ {"Bones",        { 226, 222, 200, 255 }, 200, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  90, true},
     /* Soil         */ {"Soil",         { 110,  80,  50, 255 }, 145, true,  false,   0, 150, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  25, true},
     /* PackedDirt   */ {"Packed Dirt",  { 124,  88,  58, 255 }, 150, true,  false,   0, 190, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  30, true},

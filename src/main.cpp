@@ -169,7 +169,9 @@ int runGame(bool smoke) {
         bool lightning = (GetRandomValue(0, 1000) < 2);
 
         timeAccum += 1.0f / 60.0f;
-        lighting.update(world, player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, timeAccum, lightning);
+        lighting.update(world, player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, timeAccum, lightning,
+                        tools.lastExplosionX(), tools.lastExplosionY(), tools.lastExplosionTimer());
+        tools.clearExplosion();
 
         // Only the pixels near the player get simulated. Everything else waits,
         // exactly as it was, until it comes into view.
@@ -180,7 +182,7 @@ int runGame(bool smoke) {
             std::min(world.height() - 1, camera.viewY() + viewport.gridHeight - 1 + SIM_MARGIN)};
         sim.step(world, region);
 
-        renderer.updateImage(world, lighting.data());
+        renderer.updateImage(world, &lighting);
 
         const float offsetX = static_cast<float>(viewport.offsetX) -
                               static_cast<float>(camera.viewX() * viewport.scale);

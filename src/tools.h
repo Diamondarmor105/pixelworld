@@ -35,9 +35,15 @@ public:
 
     static const char* name(Tool t);
 
+    float lastExplosionX() const { return lastExplosionX_; }
+    float lastExplosionY() const { return lastExplosionY_; }
+    float lastExplosionTimer() const { return lastExplosionTimer_; }
+    void clearExplosion() { lastExplosionTimer_ = 0; }
+
 private:
     void detonate(World& world, Projectile& p);
     Tool selected_ = Tool::SparkWand;
     std::vector<Projectile> projectiles_;
     int cooldown_ = 0;
+    float lastExplosionX_ = 0, lastExplosionY_ = 0, lastExplosionTimer_ = 0;
 };

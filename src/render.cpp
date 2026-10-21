@@ -18,7 +18,7 @@ Renderer::~Renderer() {
     UnloadImage(image_);
 }
 
-void Renderer::updateImage(const World& world, const float* light) {
+void Renderer::updateImage(const World& world, const Lighting* lighting) {
     Color* pixels = static_cast<Color*>(image_.data);
     for (int y = 0; y < world.height(); ++y) {
         for (int x = 0; x < world.width(); ++x) {
@@ -30,16 +30,6 @@ void Renderer::updateImage(const World& world, const float* light) {
                 color = ((x + y + life) & 1) ? kFireHot : kFireCool;
             } else {
                 color = materialInfo(m).color;
-                // A liquid cell holds a fraction of a unit of liquid, so draw a
-                // partly filled cell as a paler shade of the liquid rather than
-                // as a solid block - that is what makes a shallow film read as
-                // thin water and gives a pool surface a crisp edge.
-                //
-                // This must NOT be done by lowering the alpha: the image is
-                // uploaded as an opaque texture, so a low alpha is blended
-                // against black and the water comes out dark grey to black. The
-                // colour is mixed toward the air colour instead, and the alpha
-                // is left at 255.
                 if (materialInfo(m).flows || materialInfo(m).rises) {
                     const float mass = world.mass(x, y);
                     const float full = mass > 1.0f ? 1.0f : (mass < 0.0f ? 0.0f : mass);
@@ -51,15 +41,17 @@ void Renderer::updateImage(const World& world, const float* light) {
                     color.a = 255;
                 }
             }
-            if (light) {
-                float L = light[static_cast<size_t>(y) * world.width() + x];
+
+            if (lighting) {
+                float L = lighting->at(x, y);
                 if (L < 0.0f) L = 0.0f;
                 if (L > 1.0f) L = 1.0f;
                 float factor = 0.15f + 0.85f * L;
-                color.r = static_cast<unsigned char>(color.r * factor);
-                color.g = static_cast<unsigned char>(color.g * factor);
-                color.b = static_cast<unsigned char>(color.b * factor);
+                color.r = static_cast<unsigned char>(color.r * factor * lighting->tintR(x, y));
+                color.g = static_cast<unsigned char>(color.g * factor * lighting->tintG(x, y));
+                color.b = static_cast<unsigned char>(color.b * factor * lighting->tintB(x, y));
             }
+
             pixels[static_cast<size_t>(y) * world.width() + x] = color;
         }
     }

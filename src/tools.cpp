@@ -34,20 +34,26 @@ void Tools::fire(float sx, float sy, float tx, float ty) {
             p.tool = Tool::SparkWand;
             cooldown_ = 8;
             break;
-        case Tool::Dynamite:
-            p.vx = dx / len * 0.6f;
-            p.vy = dy / len * 0.6f - 0.3f;
+        case Tool::Dynamite: {
+            float speed = std::min(len * 0.05f, 1.2f);
+            if (speed < 0.3f) speed = 0.3f;
+            p.vx = dx / len * speed;
+            p.vy = dy / len * speed - 0.3f;
             p.life = 120;
             p.tool = Tool::Dynamite;
             cooldown_ = 20;
             break;
-        case Tool::AcidFlask:
-            p.vx = dx / len * 0.7f;
-            p.vy = dy / len * 0.7f - 0.2f;
+        }
+        case Tool::AcidFlask: {
+            float speed = std::min(len * 0.05f, 1.0f);
+            if (speed < 0.3f) speed = 0.3f;
+            p.vx = dx / len * speed;
+            p.vy = dy / len * speed - 0.2f;
             p.life = 120;
             p.tool = Tool::AcidFlask;
             cooldown_ = 20;
             break;
+        }
     }
     projectiles_.push_back(p);
 }
@@ -133,37 +139,22 @@ void Tools::detonate(World& world, Projectile& p) {
         int effectiveRadius = underwater ? radius / 2 : radius;
         int er2 = effectiveRadius * effectiveRadius;
 
-        std::vector<std::pair<int,int>> debris;
         for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
             for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
                 if (!world.inBounds(x, y)) continue;
                 int dx = x - cx, dy = y - cy;
-                if (dx * dx + dy * dy > er2) continue;
+                float dist = std::sqrt((float)(dx*dx + dy*dy));
+                if (dist > effectiveRadius) continue;
                 Mat m = world.at(x, y);
                 if (m == Mat::Bedrock) continue;
                 int resist = materialInfo(m).blastResistance;
-                int chance = 255 - resist;
-                if (rand() % 256 > chance) continue;
-                if (m != Mat::Air && (materialInfo(m).falls || materialInfo(m).flows)) {
-                    debris.push_back({x, y});
-                }
+                // Energy falloff: closer to center = more likely to destroy.
+                // At center, probability = 1 - resist/255. At edge, half that.
+                float energy = 1.0f - (dist / (float)effectiveRadius) * 0.5f;
+                int chance = (int)((255 - resist) * energy);
+                if (chance < 0) chance = 0;
+                if (rand() % 256 > chance) continue; // survived
                 world.set(x, y, Mat::Air);
-            }
-        }
-        // Fling debris outward.
-        int debrisCount = underwater ? 2 : 5;
-        for (auto& d : debris) {
-            int dx = d.first - cx, dy = d.second - cy;
-            float dist = std::sqrt((float)(dx*dx + dy*dy));
-            if (dist < 0.1f) dist = 0.1f;
-            for (int i = 0; i < debrisCount; ++i) {
-                float nx = dx / dist + ((rand() % 100) / 100.0f - 0.5f) * 0.6f;
-                float ny = dy / dist + ((rand() % 100) / 100.0f - 0.5f) * 0.6f;
-                int rx = cx + (int)(nx * (effectiveRadius + 1 + rand() % 4));
-                int ry = cy + (int)(ny * (effectiveRadius + 1 + rand() % 4));
-                if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-                    world.setMass(rx, ry, Mat::Gravel, 0.3f + (rand() % 50) / 100.0f);
-                }
             }
         }
         // Light the rim (fire doesn't spread well underwater).

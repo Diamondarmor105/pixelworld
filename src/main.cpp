@@ -10,7 +10,7 @@
 #include "player.h"
 #include "raylib.h"
 #include "render.h"
-#include "sim.h"
+#include "tools.h"
 #include "world.h"
 
 namespace {
@@ -122,6 +122,8 @@ int runGame(bool smoke) {
     camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
     camera.clamp(world.width(), world.height());
 
+    Tools tools;
+
     int frames = 0;
     while (!WindowShouldClose()) {
         // Temporary: `R` rebuilds the scene and puts the player back, so it can
@@ -132,6 +134,11 @@ int runGame(bool smoke) {
             player = Player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
         }
 
+        // Tool selection.
+        if (IsKeyPressed(KEY_ONE)) tools.setTool(Tool::SparkWand);
+        if (IsKeyPressed(KEY_TWO)) tools.setTool(Tool::Dynamite);
+        if (IsKeyPressed(KEY_THREE)) tools.setTool(Tool::AcidFlask);
+
         float moveInput = 0.0f;
         if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) moveInput += 1.0f;
         if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveInput -= 1.0f;
@@ -141,16 +148,20 @@ int runGame(bool smoke) {
         camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
         camera.clamp(world.width(), world.height());
 
-        // Temporary debug brush: hold the left mouse button to set fire. The
-        // screen position has to be turned back into a world position first.
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        // Fire tool on left click.
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             const Vector2 mouse = GetMousePosition();
-            const int gx = camera.viewX() +
-                           static_cast<int>((mouse.x - viewport.offsetX) / viewport.scale);
-            const int gy = camera.viewY() +
-                           static_cast<int>((mouse.y - viewport.offsetY) / viewport.scale);
-            paintFire(world, gx, gy, 3);
+            const float gx = camera.viewX() +
+                           static_cast<float>((mouse.x - viewport.offsetX) / viewport.scale);
+            const float gy = camera.viewY() +
+                           static_cast<float>((mouse.y - viewport.offsetY) / viewport.scale);
+            tools.fire(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, gx, gy);
         }
+
+        tools.tick(world, sim);
+
+        // Temporary debug brush: hold left mouse button to set fire (still available).
+        // (removed in favor of tools)
 
         // Only the pixels near the player get simulated. Everything else waits,
         // exactly as it was, until it comes into view.
@@ -173,6 +184,16 @@ int runGame(bool smoke) {
         renderer.drawView(camera.viewX(), camera.viewY(), viewport.gridWidth, viewport.gridHeight,
                           viewport.scale, viewport.offsetX, viewport.offsetY);
         player.draw(offsetX, offsetY, viewport.scale);
+        // Draw projectiles.
+        for (const auto& p : tools.projectiles()) {
+            const float sx = (p.x - camera.viewX()) * viewport.scale + viewport.offsetX;
+            const float sy = (p.y - camera.viewY()) * viewport.scale + viewport.offsetY;
+            Color c = (p.tool == Tool::SparkWand) ? YELLOW :
+                      (p.tool == Tool::Dynamite) ? RED : GREEN;
+            DrawRectangle((int)sx - 2, (int)sy - 2, 4, 4, c);
+        }
+        // HUD: tool name.
+        DrawText(Tools::name(tools.selected()), 10, 10, 20, WHITE);
         EndDrawing();
 
         ++frames;

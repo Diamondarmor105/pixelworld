@@ -2,10 +2,11 @@
 
 namespace {
 
-// Two flame colours, used in a flicker so fire looks alive rather than a flat
-// block. A burning cell or a flame cycles between them as its life ticks down.
-constexpr Color kFireHot{255, 216, 120, 255};
-constexpr Color kFireCool{242, 122, 38, 255};
+// Realistic flame colours: hot core (white-yellow) through orange to deep red.
+constexpr Color kFireHot{255, 240, 180, 255};
+constexpr Color kFireMid{255, 160, 40, 255};
+constexpr Color kFireCool{220, 80, 15, 255};
+constexpr Color kFireDeep{140, 30, 5, 255};
 
 }  // namespace
 
@@ -28,10 +29,11 @@ void Renderer::updateImage(const World& world) {
             Color color;
             if (isBurning(m, life)) {
                 // Fire flickers with more variation.
-                int flicker = (x * 7 + y * 13 + life * 31) % 5;
+                int flicker = (x * 7 + y * 13 + life * 31) % 6;
                 if (flicker < 2) color = kFireHot;
-                else if (flicker < 4) color = kFireCool;
-                else color = Color{255, 80, 20, 255}; // deep orange
+                else if (flicker < 3) color = kFireMid;
+                else if (flicker < 5) color = kFireCool;
+                else color = kFireDeep;
             } else {
                 color = materialInfo(m).color;
                 if (materialInfo(m).flows || materialInfo(m).rises) {

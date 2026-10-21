@@ -227,41 +227,28 @@ void Tools::detonate(World& world, Projectile& p) {
                 }
             }
         }
-        // Light the rim AND center (fire doesn't spread well underwater).
+        // Cover the entire blast area with fire.
         if (!underwater) {
-            // Center fire.
-            for (int dy = -2; dy <= 2; ++dy) {
-                for (int dx = -2; dx <= 2; ++dx) {
-                    int x = cx + dx, y = cy + dy;
-                    if (!world.inBounds(x, y)) continue;
-                    Mat m = world.at(x, y);
-                    if (m == Mat::Air || materialInfo(m).flammable) {
-                        world.set(x, y, Mat::Fire);
-                        world.setLife(x, y, FIRE_LIFE + (rand() % 4));
-                    }
-                }
-            }
-            // Rim fire.
-            for (int y = cy - effectiveRadius - 1; y <= cy + effectiveRadius + 1; ++y) {
-                for (int x = cx - effectiveRadius - 1; x <= cx + effectiveRadius + 1; ++x) {
+            for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
+                for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
                     if (!world.inBounds(x, y)) continue;
                     int dx = x - cx, dy = y - cy;
-                    int d2 = dx * dx + dy * dy;
-                    if (d2 < (effectiveRadius-2)*(effectiveRadius-2) || d2 > (effectiveRadius + 2) * (effectiveRadius + 2)) continue;
+                    float dist = std::sqrt((float)(dx*dx + dy*dy));
+                    if (dist > effectiveRadius) continue;
                     if (!hasLOS(cx, cy, x, y)) continue;
                     Mat m = world.at(x, y);
                     if (m == Mat::Air || materialInfo(m).flammable) {
                         world.set(x, y, Mat::Fire);
-                        world.setLife(x, y, FIRE_LIFE + (rand() % 4));
+                        world.setLife(x, y, FIRE_LIFE + (rand() % 5));
                     }
                 }
             }
             // Spawn smoke at the blast site.
-            for (int i = 0; i < 20; ++i) {
-                int rx = cx + (rand() % 9) - 4;
-                int ry = cy - (rand() % 6);
+            for (int i = 0; i < 24; ++i) {
+                int rx = cx + (rand() % 11) - 5;
+                int ry = cy - (rand() % 7);
                 if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-                    world.setMass(rx, ry, Mat::Smoke, 0.5f + (rand() % 50) / 100.0f);
+                    world.setMass(rx, ry, Mat::Smoke, 0.4f + (rand() % 60) / 100.0f);
                 }
             }
         } else {

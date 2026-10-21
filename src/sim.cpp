@@ -385,7 +385,8 @@ void flowMass(World& world, int x, int y, float& budget) {
         bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
         if (info.falls && materialInfo(along).flows && self != Mat::PackedDirt) alongTakes = true;
         if (alongTakes) {
-            const float alongMass = (alongFlows || alongFalls || alongRises) ? world.massAt(x, gy) : 0.0f;
+            const float alongMass = ((info.falls && materialInfo(along).flows) ? 0.0f :
+                                    ((alongFlows || alongFalls || alongRises) ? world.massAt(x, gy) : 0.0f));
             const float room = 1.0f - alongMass;
             if (room > 0.0f) {
                 float flow = std::min(myMass, room);
@@ -393,7 +394,8 @@ void flowMass(World& world, int x, int y, float& budget) {
                 if (flow > kFlowMin) {
                     const Mat into = (info.falls && materialInfo(along).flows && !(materialInfo(along).falls) && self != Mat::PackedDirt) ? self :
                                      ((alongFlows || alongFalls || alongRises) ? along : self);
-                    const float alongNow = (alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f;
+                    const float alongNow = ((info.falls && materialInfo(along).flows) ? 0.0f :
+                                           ((alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f));
                     world.setMass(x, y, self, world.mass(x, y) - flow);
                     world.setMass(x, gy, into, alongNow + flow);
                     budget -= flow;

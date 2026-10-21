@@ -234,7 +234,10 @@ void Tools::detonate(World& world, Projectile& p) {
                     if (!world.inBounds(x, y)) continue;
                     int dx = x - cx, dy = y - cy;
                     float dist = std::sqrt((float)(dx*dx + dy*dy));
-                    if (dist > effectiveRadius) continue;
+                    float angle = std::atan2((float)dy, (float)dx);
+                    float jitter = 0.85f + 0.3f * std::sin(angle * 3.0f + (float)(rand() % 100) / 100.0f * 6.28f);
+                    float effR = effectiveRadius * jitter;
+                    if (dist > effR) continue;
                     if (!hasLOS(cx, cy, x, y)) continue;
                     Mat m = world.at(x, y);
                     if (m == Mat::Air || materialInfo(m).flammable) {

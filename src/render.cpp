@@ -2,11 +2,12 @@
 
 namespace {
 
-// Realistic flame colours: hot core (white-yellow) through orange to deep red.
-constexpr Color kFireHot{255, 240, 180, 255};
-constexpr Color kFireMid{255, 160, 40, 255};
-constexpr Color kFireCool{220, 80, 15, 255};
-constexpr Color kFireDeep{140, 30, 5, 255};
+// Realistic flame palette: white core -> yellow -> orange -> red -> dark red.
+constexpr Color kFireCore{255, 250, 220, 255};
+constexpr Color kFireHot{255, 200, 60, 255};
+constexpr Color kFireMid{240, 110, 20, 255};
+constexpr Color kFireCool{200, 50, 8, 255};
+constexpr Color kFireDeep{120, 15, 2, 255};
 
 }  // namespace
 
@@ -30,7 +31,8 @@ void Renderer::updateImage(const World& world) {
             if (isBurning(m, life)) {
                 // Fire flickers with more variation.
                 int flicker = (x * 7 + y * 13 + life * 31) % 6;
-                if (flicker < 2) color = kFireHot;
+                if (flicker < 1) color = kFireCore;
+                else if (flicker < 2) color = kFireHot;
                 else if (flicker < 3) color = kFireMid;
                 else if (flicker < 5) color = kFireCool;
                 else color = kFireDeep;

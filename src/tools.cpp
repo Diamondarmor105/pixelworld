@@ -4,6 +4,7 @@
 #include "sim.h"
 
 #include <cmath>
+#include <tuple>
 
 const char* Tools::name(Tool t) {
     switch (t) {
@@ -139,6 +140,8 @@ void Tools::detonate(World& world, Projectile& p) {
         int effectiveRadius = underwater ? radius / 2 : radius;
         int er2 = effectiveRadius * effectiveRadius;
 
+        // First pass: collect liquid moves (to avoid double-processing).
+        std::vector<std::tuple<int,int,int,int,Mat,float>> liquidMoves;
         for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
             for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
                 if (!world.inBounds(x, y)) continue;
@@ -148,32 +151,49 @@ void Tools::detonate(World& world, Projectile& p) {
                 Mat m = world.at(x, y);
                 if (m == Mat::Bedrock) continue;
                 bool isLiquid = materialInfo(m).flows || materialInfo(m).rises;
-                // Energy decreases with distance: full at center, zero at edge.
+                if (!isLiquid) continue;
+                float nx = (dist < 0.1f) ? 0 : dx / dist;
+                float ny = (dist < 0.1f) ? -1 : dy / dist;
+                int tx = cx + (int)(nx * (effectiveRadius + 2));
+                int ty = cy + (int)(ny * (effectiveRadius + 2));
+                if (tx < 0) tx = 0;
+                if (tx >= world.width()) tx = world.width() - 1;
+                if (ty < 0) ty = 0;
+                if (ty >= world.height()) ty = world.height() - 1;
+                float mass = world.mass(x, y);
+                if (mass <= 0) mass = 1.0f;
+                liquidMoves.push_back({x, y, tx, ty, m, mass});
+            }
+        }
+        // Apply liquid moves.
+        for (auto& lm : liquidMoves) {
+            int x = std::get<0>(lm), y = std::get<1>(lm);
+            int tx = std::get<2>(lm), ty = std::get<3>(lm);
+            Mat m = std::get<4>(lm);
+            float mass = std::get<5>(lm);
+            Mat targetMat = world.at(tx, ty);
+            if (targetMat == Mat::Air) {
+                world.setMass(tx, ty, m, mass);
+            } else if (materialInfo(targetMat).flows || materialInfo(targetMat).rises) {
+                world.setMass(tx, ty, targetMat, world.mass(tx, ty) + mass);
+            }
+            world.set(x, y, Mat::Air);
+        }
+        // Destroy solids based on energy.
+        for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
+            for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
+                if (!world.inBounds(x, y)) continue;
+                int dx = x - cx, dy = y - cy;
+                float dist = std::sqrt((float)(dx*dx + dy*dy));
+                if (dist > effectiveRadius) continue;
+                Mat m = world.at(x, y);
+                if (m == Mat::Bedrock) continue;
+                if (materialInfo(m).flows || materialInfo(m).rises) continue; // liquids already handled
                 float energy = 1.0f - (dist / (float)effectiveRadius);
                 if (energy < 0) energy = 0;
                 int resist = materialInfo(m).blastResistance;
-                if (isLiquid) {
-                    // Don't destroy liquids; push them outward.
-                    // Move the liquid cell to the edge of the blast.
-                    float nx = (dist < 0.1f) ? 0 : dx / dist;
-                    float ny = (dist < 0.1f) ? -1 : dy / dist;
-                    int tx = cx + (int)(nx * (effectiveRadius + 2));
-                    int ty = cy + (int)(ny * (effectiveRadius + 2));
-                    if (world.inBounds(tx, ty) && world.at(tx, ty) == Mat::Air) {
-                        float mass = world.mass(x, y);
-                        world.setMass(tx, ty, m, mass > 0 ? mass : 1.0f);
-                        world.set(x, y, Mat::Air);
-                    } else {
-                        // If can't push, just set to air (liquid destroyed as last resort).
-                        if ((int)(energy * 255.0f) > resist) {
-                            world.set(x, y, Mat::Air);
-                        }
-                    }
-                } else {
-                    // Solids: destroy if energy exceeds blast resistance.
-                    if ((int)(energy * 255.0f) > resist) {
-                        world.set(x, y, Mat::Air);
-                    }
+                if ((int)(energy * 255.0f) > resist) {
+                    world.set(x, y, Mat::Air);
                 }
             }
         }

@@ -67,12 +67,11 @@ void tryIgnite(World& world, int x, int y, int frame) {
 // of leaving isolated unburned pixels.
 void spreadFire(World& world, int x, int y, int frame, bool includeDiagonals) {
     (void)includeDiagonals;
-    for (int dy = -1; dy <= 1; ++dy) {
-        for (int dx = -1; dx <= 1; ++dx) {
-            if (dx == 0 && dy == 0) continue;
-            tryIgnite(world, x + dx, y + dy, frame);
-        }
-    }
+    // Fire spreads only to the four nearest (cardinal) neighbors.
+    tryIgnite(world, x + 1, y, frame);
+    tryIgnite(world, x - 1, y, frame);
+    tryIgnite(world, x, y + 1, frame);
+    tryIgnite(world, x, y - 1, frame);
 }
 
 // Fire and burning fuel age by one tick, spread to whatever is next to them, and

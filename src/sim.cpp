@@ -264,7 +264,12 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
     if (info.flammable && hot == Mat::Lava) tryIgnite(world, hx, hy, frame);
 
     // Lava reaching sulfur crust blows a small crater and lights the rim.
-    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy, 5);
+    if (cold == Mat::SulfurCrust && hot == Mat::Lava) {
+        // Center explosion on the lava (hot) position, not the sulfur.
+        const int ex = hotIsA ? x : nx;
+        const int ey = hotIsA ? y : ny;
+        explode(world, ex, ey, 5);
+    }
 }
 
 // Every pair of touching cells that knows about each other gets a chance to
@@ -392,12 +397,23 @@ void flowMass(World& world, int x, int y, float& budget) {
                 float flow = std::min(myMass, room);
                 if (myMass - flow < kMassEmpty) flow = myMass;
                 if (flow > kFlowMin) {
-                    const Mat into = (info.falls && materialInfo(along).flows && !(materialInfo(along).falls) && self != Mat::PackedDirt) ? self :
-                                     ((alongFlows || alongFalls || alongRises) ? along : self);
-                    const float alongNow = ((info.falls && materialInfo(along).flows) ? 0.0f :
-                                           ((alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f));
+                    bool solidIntoLiquid = info.falls && materialInfo(along).flows && self != Mat::PackedDirt;
+                    float liquidMass = solidIntoLiquid ? world.mass(x, gy) : 0.0f;
+                    Mat liquidMat = along;
+                    const Mat into = solidIntoLiquid ? self : ((alongFlows || alongFalls || alongRises) ? along : self);
+                    const float alongNow = solidIntoLiquid ? 0.0f : ((alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f);
                     world.setMass(x, y, self, world.mass(x, y) - flow);
                     world.setMass(x, gy, into, alongNow + flow);
+                    // Displace liquid upward when solid sinks into it.
+                    if (solidIntoLiquid && liquidMass > 0.0f) {
+                        // Find first air cell above.
+                        for (int yy = gy - 1; yy >= 0; --yy) {
+                            if (world.at(x, yy) == Mat::Air) {
+                                world.setMass(x, yy, liquidMat, liquidMass);
+                                break;
+                            }
+                        }
+                    }
                     budget -= flow;
                     return;
                 }

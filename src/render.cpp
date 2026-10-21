@@ -57,7 +57,10 @@ void Renderer::updateImage(const World& world) {
                     const float mass = world.mass(x, y);
                     const float full = mass > 1.0f ? 1.0f : (mass < 0.0f ? 0.0f : mass);
                     const Color air = materialInfo(Mat::Air).color;
-                    float mix = full * full;
+                    // Linear blend with a minimum visibility floor so small
+                    // amounts of liquid are still visible.
+                    float mix = 0.3f + 0.7f * full;
+                    if (mix < 0.3f) mix = 0.3f;
                     color.r = static_cast<unsigned char>(air.r + (color.r - air.r) * mix);
                     color.g = static_cast<unsigned char>(air.g + (color.g - air.g) * mix);
                     color.b = static_cast<unsigned char>(air.b + (color.b - air.b) * mix);

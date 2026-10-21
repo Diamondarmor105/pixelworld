@@ -29,28 +29,28 @@ void Tools::fire(float sx, float sy, float tx, float ty) {
 
     switch (selected_) {
         case Tool::SparkWand:
-            p.vx = dx / len * 1.2f;
-            p.vy = dy / len * 1.2f;
+            p.vx = dx / len * 2.0f;
+            p.vy = dy / len * 2.0f;
             p.life = 60;
             p.tool = Tool::SparkWand;
             cooldown_ = 8;
             break;
         case Tool::Dynamite: {
-            float speed = std::min(len * 0.05f, 1.2f);
-            if (speed < 0.3f) speed = 0.3f;
+            float speed = std::min(len * 0.08f, 2.0f);
+            if (speed < 0.4f) speed = 0.4f;
             p.vx = dx / len * speed;
             p.vy = dy / len * speed - 0.3f;
-            p.life = 120;
+            p.life = 150;
             p.tool = Tool::Dynamite;
             cooldown_ = 20;
             break;
         }
         case Tool::AcidFlask: {
-            float speed = std::min(len * 0.05f, 1.0f);
-            if (speed < 0.3f) speed = 0.3f;
+            float speed = std::min(len * 0.08f, 1.5f);
+            if (speed < 0.4f) speed = 0.4f;
             p.vx = dx / len * speed;
             p.vy = dy / len * speed - 0.2f;
-            p.life = 120;
+            p.life = 150;
             p.tool = Tool::AcidFlask;
             cooldown_ = 20;
             break;

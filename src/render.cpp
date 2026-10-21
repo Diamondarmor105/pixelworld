@@ -7,39 +7,6 @@
 
 namespace {
 
-// Realistic flame palette based on temperature.
-constexpr Color kFireCore{255, 255, 240, 255};
-constexpr Color kFireHot{255, 220, 80, 255};
-constexpr Color kFireMid{255, 140, 20, 255};
-constexpr Color kFireCool{230, 60, 8, 255};
-constexpr Color kFireDeep{160, 20, 3, 255};
-
-static Color lerpColor(Color c1, Color c2, float t) {
-    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-    return Color{
-        static_cast<unsigned char>(c1.r + (c2.r - c1.r) * t),
-        static_cast<unsigned char>(c1.g + (c2.g - c1.g) * t),
-        static_cast<unsigned char>(c1.b + (c2.b - c1.b) * t),
-        static_cast<unsigned char>(c1.a + (c2.a - c1.a) * t)
-    };
-}
-
-static Color getFireColor(uint8_t life, int x, int y) {
-    float flicker = static_cast<float>((x * 7 + y * 13 + life * 3) % 100) / 100.0f;
-    float normalizedLife = static_cast<float>(life) / 255.0f;
-    float temp = normalizedLife * 0.7f + flicker * 0.3f;
-
-    if (temp > 0.8f) {
-        return lerpColor(kFireHot, kFireCore, (temp - 0.8f) / 0.2f);
-    } else if (temp > 0.5f) {
-        return lerpColor(kFireMid, kFireHot, (temp - 0.5f) / 0.3f);
-    } else if (temp > 0.2f) {
-        return lerpColor(kFireCool, kFireMid, (temp - 0.2f) / 0.3f);
-    } else {
-        return lerpColor(kFireDeep, kFireCool, temp / 0.2f);
-    }
-}
-
 }  // namespace
 
 Renderer::Renderer(int width, int height) {
@@ -60,17 +27,16 @@ void Renderer::updateImage(const World& world) {
 
             Color color;
             if (isBurning(m, life)) {
-                color = getFireColor(life, x, y);
+                // Fire color: bright yellow center -> orange -> red edges.
+                // Use life and position for flickering.
+                int t = (x * 3 + y * 7 + life * 11) % 7;
+                if (t == 0) color = Color{255, 240, 100, 255};       // bright yellow
+                else if (t <= 2) color = Color{255, 180, 40, 255};   // yellow-orange
+                else if (t <= 4) color = Color{255, 100, 15, 255};   // orange
+                else if (t <= 5) color = Color{220, 50, 5, 255};     // red-orange
+                else color = Color{160, 20, 2, 255};                 // deep red
             } else {
                 color = materialInfo(m).color;
-                // Add subtle noise to solids.
-                if (!materialInfo(m).flows && !materialInfo(m).rises && m != Mat::Air) {
-                    int noise = static_cast<int>((x * 12.9898f + y * 78.233f) * 43758.5453f);
-                    int shift = (noise % 15) - 7;
-                    color.r = static_cast<unsigned char>(std::clamp((int)color.r + shift, 0, 255));
-                    color.g = static_cast<unsigned char>(std::clamp((int)color.g + shift, 0, 255));
-                    color.b = static_cast<unsigned char>(std::clamp((int)color.b + shift, 0, 255));
-                }
                 // Liquid/gas volumetric blending with ease-out.
                 if (materialInfo(m).flows || materialInfo(m).rises) {
                     const float mass = world.mass(x, y);

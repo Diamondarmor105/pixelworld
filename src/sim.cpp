@@ -412,9 +412,7 @@ void flowMass(World& world, int x, int y, float& budget) {
                 float flow = std::min(myMass, room);
                 if (myMass - flow < kMassEmpty) flow = myMass;
                 if (flow > kFlowMin) {
-                    const Mat into = (info.falls && (alongFlows || alongRises)) ? self :
-                                     (info.rises && (alongFlows || alongFalls)) ? self :
-                                     ((alongFlows || alongFalls || alongRises) ? along : self);
+                    const Mat into = (alongFlows || alongFalls || alongRises) ? along : self;
                     world.setMass(x, y, self, world.mass(x, y) - flow);
                     world.setMass(x, gy, into, alongLive + flow);
                     budget -= flow;

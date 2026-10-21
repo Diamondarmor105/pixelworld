@@ -172,12 +172,18 @@ void Tools::detonate(World& world, Projectile& p) {
             Mat m = std::get<4>(lm);
             float mass = std::get<5>(lm);
             Mat targetMat = world.at(tx, ty);
+            bool placed = false;
             if (targetMat == Mat::Air) {
                 world.setMass(tx, ty, m, mass);
+                placed = true;
             } else if (materialInfo(targetMat).flows || materialInfo(targetMat).rises) {
                 world.setMass(tx, ty, targetMat, world.mass(tx, ty) + mass);
+                placed = true;
             }
-            world.set(x, y, Mat::Air);
+            // Only remove source if mass was successfully placed.
+            if (placed) {
+                world.set(x, y, Mat::Air);
+            }
         }
         // Destroy solids based on energy.
         for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {

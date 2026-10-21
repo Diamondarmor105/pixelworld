@@ -72,42 +72,58 @@ void Tools::tick(World& world, Simulation& sim) {
             p.vy *= 0.995f;
         }
 
-        p.x += p.vx;
-        p.y += p.vy;
-        --p.life;
+        // Sub-step movement to prevent tunneling through pixels.
+        float speed = std::sqrt(p.vx * p.vx + p.vy * p.vy);
+        int steps = (int)std::ceil(speed);
+        if (steps < 1) steps = 1;
+        float sx = p.vx / steps;
+        float sy = p.vy / steps;
 
-        int ix = static_cast<int>(std::floor(p.x));
-        int iy = static_cast<int>(std::floor(p.y));
+        bool triggered = false;
+        for (int s = 0; s < steps && !triggered; ++s) {
+            p.x += sx;
+            p.y += sy;
 
-        if (!world.inBounds(ix, iy)) { p.done = true; continue; }
+            int ix = static_cast<int>(std::floor(p.x));
+            int iy = static_cast<int>(std::floor(p.y));
 
-        Mat here = world.at(ix, iy);
+            if (!world.inBounds(ix, iy)) { p.done = true; triggered = true; break; }
 
-        // Spark wand: stop on solid, spawn fire.
-        if (p.tool == Tool::SparkWand) {
-            if (here != Mat::Air && !materialInfo(here).flows && !materialInfo(here).rises) {
-                // Spawn fire cluster with random size/shape.
-                int r = 1 + (rand() % 2);
-                for (int dy = -r; dy <= r; ++dy)
-                    for (int dx = -r; dx <= r; ++dx) {
-                        if (dx * dx + dy * dy > r * r + (rand() % 4)) continue;
-                        int fx = ix + dx, fy = iy + dy;
-                        if (!world.inBounds(fx, fy)) continue;
-                        Mat m = world.at(fx, fy);
-                        if (m == Mat::Air || materialInfo(m).flammable) {
-                            world.set(fx, fy, Mat::Fire);
-                            world.setLife(fx, fy, FIRE_LIFE + (rand() % 4));
+            Mat here = world.at(ix, iy);
+
+            if (p.tool == Tool::SparkWand) {
+                if (here != Mat::Air && !materialInfo(here).flows && !materialInfo(here).rises) {
+                    int r = 1 + (rand() % 2);
+                    for (int dy = -r; dy <= r; ++dy)
+                        for (int dx = -r; dx <= r; ++dx) {
+                            if (dx * dx + dy * dy > r * r + (rand() % 4)) continue;
+                            int fx = ix + dx, fy = iy + dy;
+                            if (!world.inBounds(fx, fy)) continue;
+                            Mat m = world.at(fx, fy);
+                            if (m == Mat::Air || materialInfo(m).flammable) {
+                                world.set(fx, fy, Mat::Fire);
+                                world.setLife(fx, fy, FIRE_LIFE + (rand() % 4));
+                            }
                         }
-                    }
-                p.done = true;
+                    p.done = true;
+                    triggered = true;
+                }
+            } else {
+                bool hit = (here != Mat::Air && !materialInfo(here).flows && !materialInfo(here).rises);
+                if (hit || p.life <= 0 || p.y >= world.height() - 2) {
+                    detonate(world, p);
+                    p.done = true;
+                    triggered = true;
+                }
             }
-        } else {
-            // Thrown objects trigger on landing (hitting solid or ground).
-            bool hit = (here != Mat::Air && !materialInfo(here).flows && !materialInfo(here).rises);
-            if (hit || p.life <= 0 || p.y >= world.height() - 2) {
+        }
+
+        --p.life;
+        if (p.life <= 0 && !p.done) {
+            if (p.tool != Tool::SparkWand) {
                 detonate(world, p);
-                p.done = true;
             }
+            p.done = true;
         }
     }
 

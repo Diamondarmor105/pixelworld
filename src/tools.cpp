@@ -140,7 +140,6 @@ void Tools::detonate(World& world, Projectile& p) {
         int er2 = effectiveRadius * effectiveRadius;
 
         // Collect loose materials to launch.
-        std::vector<std::pair<int,int>> toLaunch;
         for (int y = cy - effectiveRadius; y <= cy + effectiveRadius; ++y) {
             for (int x = cx - effectiveRadius; x <= cx + effectiveRadius; ++x) {
                 if (!world.inBounds(x, y)) continue;
@@ -155,30 +154,12 @@ void Tools::detonate(World& world, Projectile& p) {
                 int resist = materialInfo(m).blastResistance;
                 // Destroy if energy exceeds blast resistance (scaled).
                 if ((int)(energy * 255.0f) > resist) {
-                    if (materialInfo(m).falls || materialInfo(m).flows) {
-                        toLaunch.push_back({x, y});
-                    }
                     world.set(x, y, Mat::Air);
                 }
             }
         }
         // Launch debris outward with physics.
-        for (auto& d : toLaunch) {
-            int dx = d.first - cx, dy = d.second - cy;
-            float dist = std::sqrt((float)(dx*dx + dy*dy));
-            if (dist < 0.1f) dist = 0.1f;
-            float nx = dx / dist;
-            float ny = dy / dist;
-            float energy = 1.0f - (dist / (float)effectiveRadius);
-            int launchDist = 2 + (int)(energy * 6);
-            for (int i = 0; i < (underwater ? 1 : 3); ++i) {
-                int rx = cx + (int)(nx * (launchDist + i));
-                int ry = cy + (int)(ny * (launchDist + i));
-                if (world.inBounds(rx, ry) && world.at(rx, ry) == Mat::Air) {
-                    world.setMass(rx, ry, Mat::Gravel, 0.4f + energy * 0.4f);
-                }
-            }
-        }
+        // (removed: no debris spawning)
         // Light the rim (fire doesn't spread well underwater).
         if (!underwater) {
             for (int y = cy - effectiveRadius - 1; y <= cy + effectiveRadius + 1; ++y) {

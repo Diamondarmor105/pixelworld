@@ -453,10 +453,10 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     for (int x=worldX0;x<worldX1;++x){
         int surf=groundRow(x);
         for (int y=surf+300;y<height-3;++y){
-            float n=noise2(static_cast<float>(x)/100.0f,static_cast<float>(y)/100.0f,kWorldSeed+800u)*2.0f-1.0f;
+            float n=noise2(static_cast<float>(x)/180.0f,static_cast<float>(y)/180.0f,kWorldSeed+800u)*2.0f-1.0f;
             float ridged=std::fabs(n);
             float depthFactor=std::min(1.0f,std::max(0.0f,(static_cast<float>(y-surf)-200.0f)/400.0f));
-            float thresh=0.40f - depthFactor*0.15f;
+            float thresh=0.35f - depthFactor*0.12f;
             if (ridged < thresh) {
                 if (world.at(x,y)!=Mat::Water && world.at(x,y+1)!=Mat::Water) world.set(x,y,Mat::Air);
             }

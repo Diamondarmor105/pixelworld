@@ -378,6 +378,11 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
     // Thin beds of other rock in the stone. The band value is a sawtooth that
     // runs from 0 to 1 through each bed, so the seams are a few rows wide
     // and the beds themselves are tens of rows deep.
+    // Deep rock: basalt and obsidian dominate near the underworld.
+    if (depth > 900) {
+        if (band > 0.5f) return Mat::Basalt;
+        return Mat::Obsidian;
+    }
     if (band > 0.90f) return Mat::Basalt;                       // dark seams
     if (band < 0.20f) {
         if (moist > 0.60f && temp > 0.30f) return Mat::Clay;    // wet beds
@@ -838,6 +843,9 @@ static Land landAt(int worldX) {
     if (high) {
         land.topMat = Mat::Stone;
         land.screeMat = Mat::Gravel;
+    } else if (temp > 0.55f && moist > 0.70f) {
+        land.topMat = Mat::Mycelium;
+        land.screeMat = Mat::Gravel;
     } else if (temp > 0.58f && moist < 0.36f) {
         land.topMat = Mat::Sand;
         land.screeMat = Mat::Sand;
@@ -916,7 +924,10 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             Mat m = Mat::Air;
             if (y >= surface) {
                 if (y >= height - 3) {
-                    m = Mat::Bedrock;                    // the floor of the world
+                    m = Mat::Bedrock;
+                } else if (y >= height - 180) {
+                    // The underworld: ash and a lava ocean at the very bottom.
+                    m = (y >= height - 35) ? Mat::Lava : Mat::Ash;
                 } else if (y < surface + land.snowRows) {
                     m = Mat::Snow;                       // snow on the mountain tops
                 } else if (y < surface + land.snowRows + land.screeRows) {

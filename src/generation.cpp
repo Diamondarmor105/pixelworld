@@ -472,6 +472,59 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
     }
 }
 
+
+void carveCaves(World& world, int chunkStart, int chunkEnd) {
+    const int worldX0 = chunkStart * Chunk::WIDTH;
+    const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
+    const int height = world.height();
+
+    struct Carver { float x, y, angle, speed; int radius, life; uint32_t seed; };
+    std::vector<Carver> queue;
+
+    const int numCarvers = (chunkEnd - chunkStart + 1) * 2;
+    for (int i = 0; i < numCarvers; ++i) {
+        uint32_t s = hashBits(i, static_cast<int>(kWorldSeed), 7);
+        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
+        int surface = groundRow(x);
+        int y = surface + 60 + static_cast<int>((s >> 8) % 80u);
+        if (y > height - 200) y = height - 200;
+        Carver c;
+        c.x = static_cast<float>(x);
+        c.y = static_cast<float>(y);
+        c.angle = static_cast<float>(s % 360u) * 0.0174533f;
+        c.speed = 1.0f;
+        c.radius = 2;
+        c.life = 120 + static_cast<int>((s >> 12) % 80u);
+        c.seed = s;
+        queue.push_back(c);
+    }
+
+    size_t qi = 0;
+    while (qi < queue.size()) {
+        Carver c = queue[qi++];
+        for (int step = 0; step < c.life; ++step) {
+            for (int dy = -c.radius; dy <= c.radius; ++dy) {
+                for (int dx = -c.radius; dx <= c.radius; ++dx) {
+                    if (dx * dx + dy * dy > c.radius * c.radius) continue;
+                    int cx = static_cast<int>(std::lround(c.x)) + dx;
+                    int cy = static_cast<int>(std::lround(c.y)) + dy;
+                    if (cx < worldX0 || cx >= worldX1 || cy < 0 || cy >= height - 3) continue;
+                    int surf = groundRow(cx);
+                    if (cy < surf + 20) continue;
+                    if (world.at(cx, cy) == Mat::Water) continue;
+                    if (world.at(cx, cy + 1) == Mat::Water) continue;
+                    world.set(cx, cy, Mat::Air);
+                }
+            }
+            uint32_t h = hashBits(static_cast<int>(c.x), static_cast<int>(c.y), step + static_cast<int>(c.seed));
+            c.angle += (static_cast<float>(h & 0xFFFFu) / 65535.0f - 0.5f) * 0.4f;
+            c.x += std::cos(c.angle) * c.speed;
+            c.y += std::sin(c.angle) * c.speed;
+            if (c.x < worldX0 || c.x >= worldX1 || c.y < 0 || c.y >= height - 10) break;
+        }
+    }
+}
+
 // -- The hand-made test scenes ----------------------------------------------
 //
 // These are the small fixed scenes the self-test runs against. They are not
@@ -1273,10 +1326,17 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
 
 void generateChunksAround(World& world, int worldX, int radius) {
     const int centre = world.chunkIndexOf(worldX);
+    std::vector<int> newChunks;
     for (int index = centre - radius; index <= centre + radius; ++index) {
         if (world.hasChunk(index)) continue;
         Chunk& chunk = world.chunk(index);
         generateChunk(index, chunk);
+        newChunks.push_back(index);
+    }
+    if (!newChunks.empty()) {
+        int lo = *std::min_element(newChunks.begin(), newChunks.end()) - 1;
+        int hi = *std::max_element(newChunks.begin(), newChunks.end()) + 1;
+        carveCaves(world, lo, hi);
     }
 }
 

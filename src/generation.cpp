@@ -445,70 +445,7 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 
 
 void carveCaves(World& world, int chunkStart, int chunkEnd) {
-    const int worldX0 = chunkStart * Chunk::WIDTH;
-    const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
-    const int height = world.height();
-
-    // Step 4: Cellular automata caves (organic Swiss-cheese pockets).
-    // Initialize: random solid/air based on noise threshold.
-    for (int x = worldX0; x < worldX1; ++x) {
-        int surf = groundRow(x);
-        int top = surf + 120;
-        int bot = height - 100;
-        if (top < 0) top = 0;
-        if (bot > height - 3) bot = height - 3;
-        for (int y = top; y < bot; ++y) {
-            float depth = static_cast<float>(y - surf);
-            float scale = 15.0f + (depth / 200.0f) * 35.0f;
-            if (scale > 60.0f) scale = 60.0f;
-            float n = noise2(static_cast<float>(x) / scale, static_cast<float>(y) / scale, kWorldSeed + 1100u);
-            if (n > 0.75f) world.set(x, y, Mat::Air);
-        }
-    }
-    // Smooth: 4 iterations of CA rules.
-    for (int iter = 0; iter < 0; ++iter) {
-        std::vector<std::pair<int,int>> changes;
-        for (int x = worldX0; x < worldX1; ++x) {
-            int surf = groundRow(x);
-            int top = surf + 120;
-            int bot = height - 100;
-            if (top < 0) top = 0;
-            if (bot > height - 3) bot = height - 3;
-            for (int y = top; y < bot; ++y) {
-                int airNeigh = 0;
-                for (int dy = -1; dy <= 1; ++dy)
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        if (dx == 0 && dy == 0) continue;
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
-                        if (world.at(nx, ny) == Mat::Air) ++airNeigh;
-                    }
-                Mat cur = world.at(x, y);
-                if (cur == Mat::Air && airNeigh < 4) changes.emplace_back(x, y);
-                if (cur != Mat::Air && cur != Mat::Water && airNeigh >= 5) changes.emplace_back(x, y);
-            }
-        }
-        for (auto &p : changes) {
-            if (world.at(p.first, p.second) == Mat::Air) world.set(p.first, p.second, Mat::Stone);
-            else world.set(p.first, p.second, Mat::Air);
-        }
-    }
-
-    // Step 5: Liquid placement (U-basins in lower regions).
-    // Liquid placement: fill U-basins in lower regions with water.
-    for (int x=worldX0;x<worldX1;++x){
-        for (int y=height-200;y<height-10;++y){
-            if (world.at(x,y)!=Mat::Air) continue;
-            // if cell below is solid and sides solid -> pocket
-            if (y+1>=height-3) continue;
-            if (world.at(x,y+1)!=Mat::Air && world.at(x,y+1)!=Mat::Water) {
-                // check left/right walls
-                bool leftWall = (x>worldX0 && world.at(x-1,y)!=Mat::Air);
-                bool rightWall = (x+1<worldX1 && world.at(x+1,y)!=Mat::Air);
-                if (leftWall && rightWall) world.set(x,y,Mat::Water);
-            }
-        }
-    }
+    (void)world; (void)chunkStart; (void)chunkEnd;
 }
 
 // -- The hand-made test scenes ----------------------------------------------

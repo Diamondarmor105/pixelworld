@@ -45,12 +45,15 @@ Direction from the learner (they explicitly want this, so it shapes the build):
 
 ### The world, generation, and the camera
 
-- The world is a 2D pixel grid, endless horizontally, generated in chunks ahead of the player as they move (`scope.md > POC Boundary`).
+- The world is a 2D pixel grid, endless horizontally, generated in chunks ahead of the player as they move (`scope.md > POC Boundary`). It is **2048 rows deep**, so there is room under the player's feet for a cave system, a lava chamber, and the buried pockets between them.
 - Terrain has a surface layer: packed dirt topped with foliage, trees and foliage of varied shapes, sometimes giant trees, and scattered surface ponds of water.
 - Below the surface: hills and mountains at the surface, caves carved underneath, with clay, sand, and gravel pockets filling cave ceilings and floors, water pools, and hidden oil pockets deeper down.
 - **The land is large.** A great swell raises and lowers the whole world over thousands of columns, broad rolling hills sit on top of that, and mountain ranges stand above both, with wide plains between them. Over 40 chunks the ground moves about 200 rows from the bottom of a valley to the top of a peak.
-- **Snow lies on the mountain tops and nowhere else.** How much snow a column carries is decided by how high that column's mountain is — nothing in the lowlands, a dusting part way up, up to five rows on the highest ground. A fixed snow line across the map would put snow on flat lowland ground and leave bare peaks, so the snow follows the mountain itself.
-- **The caves are deep, rare and joined up.** Nothing within 30 rows of the surface is hollowed out, so the roof over a cave is solid ground and a pond on the surface has rock under it. The caves are large caverns that wind and run into each other rather than small scattered pockets, and they hollow out a large area of the deep rock (around one fifth) in big connected systems reaching hundreds of rows down.
+- **The ground is made of folded rock, not flat stripes.** The rock is read at a point that the noise has pushed about, twice over, so the bands of limestone, basalt and stone fold and tilt the way real rock folds instead of lying in neat horizontal stripes.
+- **The climate decides what the ground is made of.** Two slow maps run across the world — how cold it is and how wet it is — and between them they pick the surface: sand in a hot dry country, mud in a wet one, clay in a warm damp one, frozen ground in a cold one, and bare rock on the mountains.
+- **Snow lies on the mountain tops and nowhere else.** How much snow a column carries is decided by how high that column's mountain is *and* by how cold the country is that the mountain stands in, so the snow line drifts across the world as the climate drifts. Nothing in the lowlands, a dusting part way up, up to five rows on the highest ground.
+- **The weather works on the land.** Rain cuts channels down the hills where the water ran, and rock that stands too steeply does not stand: it slides down until the pile is no steeper than loose rock can hold, and what comes off a cliff ends up as a fan of rubble at its foot.
+- **The caves are deep, rare and joined up.** Nothing within 30 rows of the surface is hollowed out, so the roof over a cave is solid ground and a pond on the surface has rock under it. The caves are large caverns that wind and run into each other rather than small scattered pockets, and they hollow out about 30% of the rock in big connected systems reaching hundreds of rows down.
 - Each chunk includes hand-authored structures placed by generation — ruins (wood and stone), trees, and smaller foliage — **each with several variations** so the world doesn't feel repetitive.
 - **Simulation is limited to on-screen pixels.** Off-screen terrain is generated and held frozen until it comes into view. This is what makes an endless world affordable.
 - The player cannot fall out of the bottom of the world.
@@ -114,6 +117,9 @@ Number keys select, mouse aims, click uses (`scope.md > POC Boundary`).
 - [ ] The ground stands up: a hill, a cliff and a cave roof hold their shape instead of slumping into a flat plain.
 - [ ] A pond in the ground holds its water, level from end to end, and does not leak into a cave underneath.
 - [ ] Snow lies on the mountain tops and nowhere else: the lowlands are bare, and every snowy column sits on a mountain.
+- [ ] The ground is made of folded rock: the bands of rock under the surface tilt and bend rather than lying in flat stripes.
+- [ ] The climate decides the surface: a hot dry stretch of country is sand, a wet one is mud, a cold one is frozen ground, and a mountain is bare rock.
+- [ ] Rock that stands too steeply slides down and piles up as a fan of rubble at the foot of the cliff.
 - [ ] The caves run deep under the ground — solid rock under the surface, so a pond on the surface has a floor — and form large caverns that join up instead of small scattered pockets.
 - [ ] Lava adjacent to water becomes Stone and the water is consumed; when the lava source is large or deep the result is Obsidian instead.
 - [ ] Snow or Glacial Ice adjacent to lava or fire becomes Water.
@@ -145,7 +151,7 @@ Number keys select, mouse aims, click uses (`scope.md > POC Boundary`).
 - **Health drains; death respawns the player at the starting area; the ruined world is never reset** — learner's decision. Permanent destruction makes the player's messes meaningful.
 - **No temperature system** — the learner clarified that reactions are proximity rules only (lava/fire next to ice turns it to water; no cooling stone). Reason: they wanted the *effect*, not a heat simulation.
 - **Rigid bodies: "Version A now, grow toward Version B"** — thrown objects arc, land, and trigger; true rotation, tumbling, and stacking are deferred. Reason: full rigid bodies are the single biggest system in the project and would not fit the timeframe.
-- **Biome variety deferred as a group** — five named regions is more generation work than the demo needs. The glacier peak is the first to go. The *materials* (snow, glacial ice, basalt, obsidian, sulfur, bones) stay available in smaller amounts so nothing looks out of place. Learner's words: "nice to have."
+- **Biome variety: the climate maps are in, the named regions are not** — temperature and moisture maps now run across the world and decide the surface material and the snow line, but five *named* regions (glacial peak, volcanic depths) are still more generation work than the demo needs. The glacier peak is the first to go. The *materials* (snow, glacial ice, basalt, obsidian, sulfur, bones) stay available in smaller amounts so nothing looks out of place. Learner's words: "nice to have."
 - **Materials are data-driven** — one behavior engine with materials described by properties, so the full 24-material list is affordable and adding more later is cheap. Learner's stated wish: "the more materials you can add, the better."
 - **Three tools: Spark Wand, Dynamite, Acid Flask** — number keys select, mouse aims and fires. Learner's decision.
 - **HUD is a health bar plus a current-tool indicator**, nothing more.
@@ -167,7 +173,7 @@ Number keys select, mouse aims, click uses (`scope.md > POC Boundary`).
 ## Deferred From the POC
 
 - **True rigid bodies** — tumbling, rotating, stacking objects, and rock chunks crashing down as physics objects. Reason: a separate engine from falling-sand pixels; the largest risk to the timeframe. Version A covers the demo; the code should leave room to grow.
-- **Biome variety** — the volcanic depths and glacial peak as distinct, named regions with their own generation rules. Reason: more generation work than the demo proves; the materials still appear in smaller amounts. Likely first upgrade once the core works.
+- **Named biome regions** — the volcanic depths and glacial peak as distinct, named regions with their own generation rules. The climate maps that drive the surface material and the snow line are already in; these are the visible landmarks on top of them. Reason: more generation work than the demo proves; the materials still appear in smaller amounts. Likely first upgrade once the core works.
 - **Saving and loading a world.** Reason: not needed to prove the idea; closing the program discards the world.
 - **More structure variations** beyond "several each." Reason: nice-to-have polish; the base set already prevents repetition.
 - **More materials and a fourth tool** (a water pourer or a freeze tool were floated). Reason: only after the core works.

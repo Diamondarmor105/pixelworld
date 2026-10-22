@@ -36,27 +36,26 @@ constexpr float kCaveBasement = 0.12f;
 // space, so a cavern comes out roughly this many cells across. They are big
 // on purpose: a cave is a place you can walk into, not a pocket of air in
 // the rock.
-constexpr float kCaveWidth = 650.0f;
-constexpr float kCaveHeight = 500.0f;
+constexpr float kCaveWidth = 900.0f;
+constexpr float kCaveHeight = 700.0f;
 
 // The third axis of the cave volume: how thick the slice of rock we are
 // cutting is. Bigger means the tunnels are longer before they pinch.
-constexpr float kCaveSlice = 450.0f;
+constexpr float kCaveSlice = 600.0f;
 
 // How far the warp pushes the cave noise about, in cells. This is what makes a
 // cavern wind and curl instead of sitting in the rock as a lump.
-constexpr float kCaveWarp = 420.0f;
+constexpr float kCaveWarp = 150.0f;
 
-// How much of the cave field comes from the folded noise. The fold puts the
-// middle of the noise in long winding lines, and long winding lines connect:
-// this is what turns a heap of separate hollows into a system with passages
-// running through it. Too much of it and the lines break into little pockets.
-constexpr float kCaveFold = 0.10f;
+// How many octaves of noise the cave field is built from. Each extra octave
+// adds finer detail, and finer detail is what breaks a big cavern into a
+// heap of small ones.
+constexpr int kCaveOctaves = 1;
 
 // The cave field is read every this many rows and filled in between. The
 // field is smooth over hundreds of rows, so the shape is the same and it
 // costs a quarter of the noise work.
-constexpr int kCaveStep = 4;
+constexpr int kCaveStep = 8;
 
 // -- Noise -----------------------------------------------------------------
 //
@@ -457,27 +456,22 @@ float caveField(int worldX, int y, int surface) {
     // The warp. The cave is read at a point that another noise has pushed
     // about, so it winds and curls instead of running in round blobs. This is
     // what joins one cavern to the next.
-    const float wx = (fbm3(fx / 380.0f, depth / 340.0f, slice / 320.0f, kWorldSeed + 43u, 2) - 0.5f) * kCaveWarp;
-    const float wy = (fbm3(fx / 360.0f, depth / 320.0f, slice / 300.0f, kWorldSeed + 47u, 2) - 0.5f) * kCaveWarp;
-    const float wz = (fbm3(fx / 340.0f, depth / 300.0f, slice / 280.0f, kWorldSeed + 49u, 2) - 0.5f) * kCaveWarp;
+    //
+    // One octave, and a gentle push. A hard warp folds the field back on
+    // itself, and a field folded back on itself has a lot of small islands
+    // near the threshold - which is exactly the swiss cheese that was there
+    // before. The connecting comes from the drifting slice instead: it moves
+    // the whole cavern sideways as you travel, so passages that would have
+    // run side by side forever meet and join.
+    const float wx = (noise3(fx / 380.0f, depth / 340.0f, slice / 320.0f, kWorldSeed + 43u) - 0.5f) * kCaveWarp;
+    const float wy = (noise3(fx / 360.0f, depth / 320.0f, slice / 300.0f, kWorldSeed + 47u) - 0.5f) * kCaveWarp;
+    const float wz = (noise3(fx / 340.0f, depth / 300.0f, slice / 280.0f, kWorldSeed + 49u) - 0.5f) * kCaveWarp;
 
     // The cave itself: slow, wide noise, so a cavern is a cavern.
-    const float cave = fbm3((fx + wx) / kCaveWidth,
-                             (depth + wy) / kCaveHeight,
-                             (slice + wz) / kCaveSlice,
-                             kWorldSeed + 41u, 2);
-
-    // And a folded noise on top of it. The fold puts the middle of the noise
-    // in long winding lines, and long winding lines connect: this is what
-    // turns a heap of separate hollows into a system with passages running
-    // through it.
-    float folded = fbm3((fx + wx * 0.7f) / (kCaveWidth * 0.55f),
-                         (depth + wy * 0.7f) / (kCaveHeight * 0.55f),
-                         (slice + wz * 0.7f) / (kCaveSlice * 0.55f),
-                         kWorldSeed + 53u, 2);
-    folded = 1.0f - std::fabs(2.0f * folded - 1.0f);
-
-    return cave * (1.0f - kCaveFold) + folded * kCaveFold;
+    return fbm3((fx + wx) / kCaveWidth,
+                (depth + wy) / kCaveHeight,
+                (slice + wz) / kCaveSlice,
+                kWorldSeed + 41u, kCaveOctaves);
 }
 
 // How much noise a cell needs before it counts as cave. The bar drops as the

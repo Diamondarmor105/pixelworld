@@ -453,13 +453,16 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     // Initialize: random solid/air based on noise threshold.
     for (int x = worldX0; x < worldX1; ++x) {
         int surf = groundRow(x);
-        int top = surf + 80;
+        int top = surf + 120;
         int bot = height - 100;
         if (top < 0) top = 0;
         if (bot > height - 3) bot = height - 3;
         for (int y = top; y < bot; ++y) {
-            float n = noise2(static_cast<float>(x) / 15.0f, static_cast<float>(y) / 15.0f, kWorldSeed + 1100u);
-            if (n > 0.68f) world.set(x, y, Mat::Air);
+            float depth = static_cast<float>(y - surf);
+            float scale = 15.0f + (depth / 200.0f) * 35.0f;
+            if (scale > 60.0f) scale = 60.0f;
+            float n = noise2(static_cast<float>(x) / scale, static_cast<float>(y) / scale, kWorldSeed + 1100u);
+            if (n > 0.75f) world.set(x, y, Mat::Air);
         }
     }
     // Smooth: 4 iterations of CA rules.
@@ -467,7 +470,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         std::vector<std::pair<int,int>> changes;
         for (int x = worldX0; x < worldX1; ++x) {
             int surf = groundRow(x);
-            int top = surf + 80;
+            int top = surf + 120;
             int bot = height - 100;
             if (top < 0) top = 0;
             if (bot > height - 3) bot = height - 3;

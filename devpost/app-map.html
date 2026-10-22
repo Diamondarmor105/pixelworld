@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel World — app map</title>
+<style>
+  :root {
+    --ink: #23201c;
+    --muted: #6b635a;
+    --line: #ddd5c9;
+    --paper: #fbf7f0;
+    --panel: #ffffff;
+    --sky: #dceaf7;
+    --ground: #b98b5e;
+    --rock: #7d7368;
+    --snow: #eef4f8;
+    --accent: #b3541e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 54rem; margin: 0 auto; }
+  h1 { font-size: 1.9rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.2rem; margin: 2.5rem 0 .75rem; padding-bottom: .3rem; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.25rem 0 .4rem; }
+  p { margin: .6rem 0; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+  }
+  code, kbd, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { background: #f2ede4; padding: .08em .35em; border-radius: 4px; font-size: .92em; }
+  pre {
+    background: #2b2724; color: #f4efe6; padding: .8rem 1rem;
+    border-radius: 8px; overflow-x: auto; font-size: .86rem; line-height: 1.5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  .path { color: var(--muted); font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .94rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
+  details { margin: .8rem 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .stop { border-left: 4px solid var(--line); padding-left: 1rem; margin: 1.25rem 0; }
+  .stop h3 { margin-top: 0; }
+  .why { color: var(--muted); }
+  ul { padding-left: 1.2rem; }
+  li { margin: .35rem 0; }
+  figure { margin: 1.25rem 0; }
+  figcaption { color: var(--muted); font-size: .88rem; margin-top: .5rem; }
+  .tag {
+    display: inline-block; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase;
+    background: #efe7da; color: var(--muted); border-radius: 999px; padding: .12rem .6rem; margin-right: .4rem;
+  }
+  footer { margin-top: 3rem; color: var(--muted); font-size: .88rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Pixel World — app map</h1>
+<p class="sub">A take-home guide to the code you built: what the app is, how a thing you see on screen is actually made, and where to change it.</p>
+
+<h2>What this app is</h2>
+<p>
+  A 2D side-view pixel sandbox. Every single cell in the grid is a material, and each
+  material has its own rules: sand falls and piles, water flows and pools, fire
+  spreads on its own, lava crusts water into stone. You walk around, and you carry
+  three tools — a spark wand, dynamite and an acid flask — that let you tear the
+  world apart. There is no score and no goal; the point is to mess with it.
+</p>
+
+<p>It is three pieces, and they never talk to each other directly:</p>
+<table>
+  <tr><th>Piece</th><th>What it does</th><th>Where it lives</th></tr>
+  <tr>
+    <td><strong>The world</strong></td>
+    <td>A grid of cells, endless sideways. It is cut into 256-cell-wide strips
+      ("chunks"); each strip is built once, from its own number, and kept for good,
+      so anything you break stays broken.</td>
+    <td><code>src/world.h</code>, <code>src/world.cpp</code></td>
+  </tr>
+  <tr>
+    <td><strong>The recipe</strong></td>
+    <td>Builds a strip of terrain from its number: land, dirt, rock, caves, water,
+      lava, snow, and the hand-made ruins and trees that stand on it.</td>
+    <td><code>src/generation.cpp</code></td>
+  </tr>
+  <tr>
+    <td><strong>The rules</strong></td>
+    <td>Each frame, every cell near you follows the rules of its material —
+      falling, flowing, burning, reacting with its neighbours. Cells off-screen are
+      left alone and wait.</td>
+    <td><code>src/sim.cpp</code>, <code>src/materials.cpp</code></td>
+  </tr>
+</table>
+
+<h2>One action, end to end</h2>
+<p>
+  You hold <kbd>D</kbd> and walk to the right. The land rises into a snow-capped
+  mountain. Here is every place that had to happen for that to be true.
+</p>
+
+<figure>
+<svg viewBox="0 0 700 300" width="100%" height="auto" role="img"
+     aria-label="Flow diagram: walking right moves the camera, the camera asks for new chunks, the recipe builds the land, the rules run on it, and it is drawn on screen.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a7f70"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="700" height="300" fill="#fbf7f0" rx="10"/>
+
+  <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#23201c">
+    <rect x="24" y="30" width="180" height="56" rx="8" fill="#dceaf7" stroke="#a9c6e2"/>
+    <text x="36" y="52">src/main.cpp:180</text>
+    <text x="36" y="70">you press D</text>
+
+    <rect x="256" y="30" width="200" height="56" rx="8" fill="#dceaf7" stroke="#a9c6e2"/>
+    <text x="268" y="52">src/main.cpp:191</text>
+    <text x="268" y="70">camera.follow(player)</text>
+
+    <rect x="508" y="30" width="168" height="56" rx="8" fill="#f2ede4" stroke="#d8cdbb"/>
+    <text x="520" y="52">src/camera.cpp</text>
+    <text x="520" y="70">the view slides right</text>
+
+    <rect x="24" y="118" width="200" height="56" rx="8" fill="#f2ede4" stroke="#d8cdbb"/>
+    <text x="36" y="140">src/generation.cpp:744</text>
+    <text x="36" y="158">generateChunksAround</text>
+
+    <rect x="256" y="118" width="200" height="56" rx="8" fill="#e7f0e2" stroke="#b9d3ac"/>
+    <text x="268" y="140">src/generation.cpp:486</text>
+    <text x="268" y="158">generateChunk(index)</text>
+
+    <rect x="508" y="118" width="168" height="56" rx="8" fill="#e7f0e2" stroke="#b9d3ac"/>
+    <text x="520" y="140">landAt / isCave</text>
+    <text x="520" y="158">the recipe itself</text>
+
+    <rect x="24" y="206" width="200" height="56" rx="8" fill="#dceaf7" stroke="#a9c6e2"/>
+    <text x="36" y="228">src/main.cpp:214</text>
+    <text x="36" y="246">sim.step(world, region)</text>
+
+    <rect x="256" y="206" width="200" height="56" rx="8" fill="#dceaf7" stroke="#a9c6e2"/>
+    <text x="268" y="228">src/render.cpp:42</text>
+    <text x="268" y="246">updateImage / drawView</text>
+
+    <rect x="508" y="206" width="168" height="56" rx="8" fill="#f6e3c8" stroke="#e0bd8c"/>
+    <text x="520" y="228">on screen</text>
+    <text x="520" y="246">mountain + snow</text>
+  </g>
+
+  <g stroke="#8a7f70" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M 204 58 L 252 58"/>
+    <path d="M 456 58 L 504 58"/>
+    <path d="M 592 86 L 592 114"/>
+    <path d="M 456 146 L 504 146"/>
+    <path d="M 396 174 L 396 202"/>
+    <path d="M 204 234 L 252 234"/>
+    <path d="M 456 234 L 504 234"/>
+  </g>
+</svg>
+<figcaption>
+  Two things happen when you walk: the <em>rules</em> run on the cells you can see
+  (left, blue), and when you near a strip that has never been built, the
+  <em>recipe</em> builds it (middle, green). The recipe is deterministic — strip
+  number 41 is always the same land — which is why you can walk away for fifty
+  strips and come back to the same mountain.
+</figcaption>
+</figure>
+
+<h2>A reference route through the code</h2>
+<p class="why">
+  Three stops, each about ten minutes. This is a map for finding your way back in,
+  not a record of a tour — use it in any order you like.
+</p>
+
+<div class="stop">
+  <h3><span class="tag">Stop 1</span> The world: a grid, and the strips it comes in</h3>
+  <p class="path"><code>src/world.h</code> &rarr; <code>src/world.cpp</code></p>
+  <p>
+    Start at <code>World::at</code>, <code>World::set</code> and
+    <code>World::mass</code> in <code>src/world.h:88</code>. Those three are the
+    whole vocabulary of the simulation: every rule in the app is a question asked
+    about one cell, or a change written to one cell.
+  </p>
+  <p>
+    Then <code>World::chunk</code> (<code>src/world.h:120</code>): the store that
+    keeps built strips around forever. Note the two jobs it does — it is both the
+    place a new strip is written into and the reason your damage survives.
+  </p>
+  <p><strong>Try this:</strong> open <code>src/world.cpp</code> and find where
+    <code>at()</code> decides what happens if you ask for a cell outside the world.
+    That one line is the "the player cannot fall out of the bottom of the world"
+    promise in the PRD.</p>
+</div>
+
+<div class="stop">
+  <h3><span class="tag">Stop 2</span> The recipe: how a strip of land is built</h3>
+  <p class="path"><code>src/generation.cpp</code></p>
+  <p>
+    <code>generateChunk</code> (<code>src/generation.cpp:486</code>) is the whole
+    recipe in one function, and it reads top to bottom like the layers of the
+    world: sky, then land and ground, then caves, then the buried pockets of
+    sand, gravel and clay, then the pond and the lava cup, then the trees and
+    ruins standing on top.
+  </p>
+  <p>
+    The land itself comes from three noises stacked on each other —
+    <code>landAt</code> (<code>src/generation.cpp:441</code>): a great swell that
+    raises the whole world over thousands of columns, broad hills on top of that,
+    and mountain ranges from folded ("ridged") noise. The snow is not a line
+    across the map; <code>snowRowsAt</code> (<code>src/generation.cpp:482</code>)
+    asks how high that column's mountain is and gives it a cap of snow to match.
+  </p>
+  <p>
+    <code>isCave</code> (<code>src/generation.cpp:157</code>) is the other half:
+    it reads the cave noise <em>in depth below the surface</em>, so a cavern sits
+    the same distance under the ground everywhere, and it refuses to hollow out
+    anything shallower than <code>kCaveRoof</code> (<code>src/generation.cpp:18</code>).
+  </p>
+  <p><strong>Try this:</strong> change <code>kCaveThreshold</code>
+    (<code>src/generation.cpp:22</code>) from <code>0.67</code> to
+    <code>0.55</code>, rebuild, and look at how much more of the rock is hollow.
+    Then put it back.</p>
+</div>
+
+<div class="stop">
+  <h3><span class="tag">Stop 3</span> The rules: what each material does</h3>
+  <p class="path"><code>src/materials.cpp</code> &rarr; <code>src/sim.cpp</code></p>
+  <p>
+    <code>src/materials.cpp:16</code> is a table with one row per material:
+    density, whether it falls, whether it flows, friction, what it melts into,
+    whether it burns. Everything the simulation knows about sand is on sand's row.
+    Change a number there and every sand in the world changes with it.
+  </p>
+  <p>
+    <code>src/sim.cpp</code> is the engine. <code>Simulation::step</code>
+    (<code>src/sim.cpp:642</code>) walks the visible region once a frame;
+    <code>flowMass</code> (<code>src/sim.cpp:383</code>) is the rule that moves
+    liquid and loose grains a cell at a time; <code>reactPair</code>
+    (<code>src/sim.cpp:186</code>) is the rule for two touching materials
+    (lava&nbsp;+&nbsp;water&nbsp;&rarr;&nbsp;stone, fire&nbsp;+&nbsp;snow&nbsp;&rarr;&nbsp;water);
+    <code>updateFire</code> (<code>src/sim.cpp:79</code>) is the rule that fire
+    spreads on its own.
+  </p>
+  <p><strong>Try this:</strong> the table has a <code>friction</code> number
+    for loose solids. Set sand's to <code>200</code> and a sand pile stands up
+    steeper than it did. It is a one-number edit, and you can undo it with
+    <code>git checkout src/materials.cpp</code>.</p>
+</div>
+
+<details>
+  <summary>Bonus stop: your tools, the player and the HUD</summary>
+  <p>
+    <code>src/tools.cpp</code> holds the three tools: <code>Tools::fire</code>
+    (<code>src/tools.cpp:66</code>) throws whatever you picked toward the mouse,
+    <code>Tools::tick</code> (<code>src/tools.cpp:104</code>) moves it, and
+    <code>Tools::detonate</code> (<code>src/tools.cpp:182</code>) sets it off.
+    A detonation goes to <code>blast</code> in <code>src/blast.cpp:62</code>,
+    which is the one place that decides how much rock an explosion removes.
+  </p>
+  <p>
+    <code>src/player.cpp</code> is you: <code>Player::tick</code>
+    (<code>src/player.cpp:69</code>) walks, jumps and falls, and
+    <code>Player::pushLoose</code> (<code>src/player.cpp:156</code>) is the rule
+    that lets you shove a light heap of sand along but not a heavy one.
+    <code>src/hud.cpp</code> draws the health bar and the name of the tool you
+    are holding.
+  </p>
+</details>
+
+<h2>To change this, start here</h2>
+<table>
+  <tr><th>You want to&hellip;</th><th>Start at</th></tr>
+  <tr><td>Make the land bigger, flatter or more mountainous</td>
+      <td><code>landAt</code> and <code>mountainHeightAt</code> in <code>src/generation.cpp</code></td></tr>
+  <tr><td>Move the snow, or make it deeper</td>
+      <td><code>snowRowsAt</code> in <code>src/generation.cpp</code></td></tr>
+  <tr><td>Make the caves deeper, rarer or bigger</td>
+      <td><code>kCaveRoof</code> and <code>kCaveThreshold</code> at the top of <code>src/generation.cpp</code></td></tr>
+  <tr><td>Change how one material behaves</td>
+      <td>Its row in the table in <code>src/materials.cpp</code></td></tr>
+  <tr><td>Change what happens when two materials touch</td>
+      <td><code>reactPair</code> in <code>src/sim.cpp</code></td></tr>
+  <tr><td>Make an explosion bigger or weaker</td>
+      <td><code>blast</code> in <code>src/blast.cpp</code></td></tr>
+  <tr><td>Add a new material</td>
+      <td>The <code>Mat</code> enum and the table in <code>src/materials.h</code> and <code>src/materials.cpp</code> — the enum order and the table order must match, and there is a <code>static_assert</code> that checks it</td></tr>
+</table>
+
+<h2>A practice to reuse</h2>
+<div class="card">
+  <p>
+    <strong>Measure the thing you care about, where it lives.</strong>
+    During the bug round, a check called <code>pond keeps its water</code> kept
+    failing — but the pond was fine. The check was counting the water in the
+    <em>whole world</em>, and a deep lava cup had melted some clay nearby into
+    water. Correct behaviour, wrong measurement. The fix was to count the water
+    <em>in the pond's own columns</em>.
+  </p>
+  <p>
+    The same round found every other bug the same way: by measuring the generated
+    world rather than by reading the code and guessing — how much water was in a
+    pond, how many columns had sunk, how many snow grains had moved, how big the
+    biggest cavern was. Each of those became a self-test that fails if the bug
+    ever comes back.
+  </p>
+  <p>
+    That is the reusable part: when something looks wrong, write down the number
+    you would expect if it were right, then measure it. A number that disagrees
+    with you is worth more than another careful read of the code.
+  </p>
+  <p class="why">Evidence: <code>devpost/checklist.md</code> &rarr; <em>Revisions</em>.
+    The checks live in <code>src/main.cpp</code> — run <code>./pixelworld --selftest</code>.</p>
+</div>
+
+<h2>Running it again</h2>
+<pre><code>brew install raylib pkg-config   # once
+make run                          # compile and play
+./pixelworld --selftest           # 46 checks, all passing
+./pixelworld --smoke              # renders frames headlessly, writes smoke.png</code></pre>
+<p>
+  Controls: <kbd>A</kbd>/<kbd>D</kbd> or &larr;/&rarr; to walk,
+  <kbd>Space</kbd> to jump, <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> to pick the
+  spark wand, dynamite or acid flask, left mouse to use it, <kbd>R</kbd> to
+  throw the world away and start again.
+</p>
+
+<footer>
+  <p>
+    This map is a snapshot of the code at commit <code>b8df2a7</code>. The code
+    moves on, so treat the line numbers as a starting point — search for the
+    function names instead.
+  </p>
+  <p>
+    Built with C++17 and <a href="https://www.raylib.com/">raylib</a>. The
+    planning documents that came before the code are in <code>devpost/</code>:
+    <code>scope.md</code>, <code>prd.md</code>, <code>spec.md</code>,
+    <code>checklist.md</code>.
+  </p>
+</footer>
+
+</main>
+</body>
+</html>

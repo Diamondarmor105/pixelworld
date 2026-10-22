@@ -106,7 +106,8 @@ Build mode: fast
 - [x] `devpost/app-map.html` generated from finished code, checked, and shown, including a project-grounded practice to reuse
 
 Activity and evidence:
-- All 44 self-tests pass, all 8 slices committed. The game runs (smoke test passes, 99.9% coverage). Every tool works as specified, the world is endless, the player can be hurt and respawn, and the world persists across death.
+- All 46 self-tests pass, all 8 slices committed. The game runs (smoke test passes, 99.9% coverage). Every tool works as specified, the world is endless, the player can be hurt and respawn, and the world persists across death.
+- The map was regenerated after the terrain round, because the round changed what the recipe does: it now has a stop on the land, the snow and the caves, and it is a snapshot of commit `b8df2a7`. The learning activity was not repeated.
 Route and stops:
 - Core journey tested in code: walk, jump, tools work, explosions break things, lava hurts, death respawns with world intact.
 Edit outcome:

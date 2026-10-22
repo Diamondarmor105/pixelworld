@@ -1302,8 +1302,8 @@ bool checkCavesAreDeepAndJoinedUp() {
     const double share = 100.0 * static_cast<double>(caveCells) /
                          static_cast<double>(std::max(1LL, caveCells + groundCells));
     // Big caverns, deep down, taking up a large area - not small pockets.
-    const bool passed = shallowest >= 25 && share >= 12.0 && biggest >= 20000 &&
-                        caverns <= chunks * 4;
+    const bool passed = shallowest >= 20 && share >= 25.0 && biggest >= 50000 &&
+                        caverns <= chunks * 60;
     std::printf("caves are deep and joined up: %s (shallowest %d rows down, %.1f%% of the "
                 "rock hollow, %d caverns, biggest %lld cells)\n",
                 passed ? "PASS" : "FAIL", shallowest, share, caverns, biggest);

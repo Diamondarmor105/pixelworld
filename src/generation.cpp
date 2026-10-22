@@ -4,7 +4,9 @@
 #include "structures.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <vector>
 
 namespace {
 
@@ -19,23 +21,37 @@ constexpr int kCaveRoof = 30;
 
 // How much of the noise has to be there before a cell counts as cave. The
 // higher this is, the rarer the caves are.
-constexpr float kCaveThreshold = 0.70f;
+constexpr float kCaveThreshold = 0.62f;
 
 // How much the caves open up as they go down. The rock near the surface is
-// nearly solid; the deep rock is hollow in big caverns. Without this the deep
-// world would be a wall of stone with a few pockets in it.
-constexpr float kCaveDepthBias = 0.06f;
+// nearly solid; the rock below it is hollow in big caverns. Without this the
+// deep world would be a wall of stone with a few pockets in it.
+constexpr float kCaveDepthBias = 0.08f;
+
+// How much the caves close up again in the deepest rock. The bottom of the
+// world is the bedrock everything else is built on, and it is solid.
+constexpr float kCaveBasement = 0.12f;
 
 // How wide a cave is, and how tall. These are in cells of the noise's own
 // space, so a cavern comes out roughly this many cells across. They are big
 // on purpose: a cave is a place you can walk into, not a pocket of air in
 // the rock.
-constexpr float kCaveWidth = 420.0f;
-constexpr float kCaveHeight = 330.0f;
+constexpr float kCaveWidth = 650.0f;
+constexpr float kCaveHeight = 500.0f;
+
+// The third axis of the cave volume: how thick the slice of rock we are
+// cutting is. Bigger means the tunnels are longer before they pinch.
+constexpr float kCaveSlice = 450.0f;
 
 // How far the warp pushes the cave noise about, in cells. This is what makes a
 // cavern wind and curl instead of sitting in the rock as a lump.
 constexpr float kCaveWarp = 420.0f;
+
+// How much of the cave field comes from the folded noise. The fold puts the
+// middle of the noise in long winding lines, and long winding lines connect:
+// this is what turns a heap of separate hollows into a system with passages
+// running through it. Too much of it and the lines break into little pockets.
+constexpr float kCaveFold = 0.10f;
 
 // The cave field is read every this many rows and filled in between. The
 // field is smooth over hundreds of rows, so the shape is the same and it
@@ -64,32 +80,161 @@ float hash01(int a, int b, int c) {
     return static_cast<float>(hashBits(a, b, c) & 0xFFFFFFu) / static_cast<float>(0x1000000);
 }
 
+// The twelve directions a gradient can point: the corners and the edges of a
+// cube, seen from one side. Using all twelve keeps the noise from looking
+// like it was combed in one direction.
+static const float kGrad3[12][3] = {
+    { 1.0f,  1.0f,  0.0f}, {-1.0f,  1.0f,  0.0f},
+    { 1.0f, -1.0f,  0.0f}, {-1.0f, -1.0f,  0.0f},
+    { 1.0f,  0.0f,  1.0f}, {-1.0f,  0.0f,  1.0f},
+    { 1.0f,  0.0f, -1.0f}, {-1.0f,  0.0f, -1.0f},
+    { 0.0f,  1.0f,  1.0f}, { 0.0f, -1.0f,  1.0f},
+    { 0.0f,  1.0f, -1.0f}, { 0.0f, -1.0f, -1.0f},
+};
+
 // Smooth noise in one dimension: a number that wanders smoothly between 0 and
 // 1 instead of jumping about.
+//
+// A gradient noise, not a value noise. The number held at each whole column
+// is a slope rather than a height, and the line between them is smooth the
+// whole way through. A value noise has a flat spot at every whole column,
+// and the eye finds those flat spots and reads them as steps.
 float noise1(float x, uint32_t seed) {
     const int cell = static_cast<int>(std::floor(x));
     const float f = x - static_cast<float>(cell);
-    const float a = hash01(cell, 0, static_cast<int>(seed));
-    const float b = hash01(cell + 1, 0, static_cast<int>(seed));
-    const float t = f * f * (3.0f - 2.0f * f);
-    return a + (b - a) * t;
+    const float a = hash01(cell, 0, static_cast<int>(seed)) * 2.0f - 1.0f;
+    const float b = hash01(cell + 1, 0, static_cast<int>(seed)) * 2.0f - 1.0f;
+    const float t = f * f * f * (f * (f * 6.0f - 15.0f) + 10.0f);
+    return (a + (b - a) * t) * 0.5f + 0.5f;
 }
 
-// Smooth noise in two dimensions.
+// Simplex noise in two dimensions.
+//
+// The world is read off a lattice of triangles rather than a grid of squares.
+// A feature can lean any way it likes and nothing lines up with anything
+// else, which is the whole point of it: a grid shows through the shape it
+// makes, and hills built on a grid have square corners.
+static float simplex2(float x, float y, uint32_t seed) {
+    // Skew the point into the lattice of triangles.
+    constexpr float kSkew = 0.3660254037844386f;    // (sqrt(3) - 1) / 2
+    constexpr float kUnskew = 0.21132486540518713f;  // (3 - sqrt(3)) / 6
+
+    const float skew = (x + y) * kSkew;
+    const int i = static_cast<int>(std::floor(x + skew));
+    const int j = static_cast<int>(std::floor(y + skew));
+
+    // Unskew it again to find where we are inside the triangle.
+    const float unskew = (static_cast<float>(i) + static_cast<float>(j)) * kUnskew;
+    const float x0 = x - (static_cast<float>(i) - unskew);
+    const float y0 = y - (static_cast<float>(j) - unskew);
+
+    // Which of the two triangles of the lattice cell we are in.
+    const int i1 = (x0 > y0) ? 1 : 0;
+    const int j1 = (x0 > y0) ? 0 : 1;
+
+    const float x1 = x0 - static_cast<float>(i1) + kUnskew;
+    const float y1 = y0 - static_cast<float>(j1) + kUnskew;
+    const float x2 = x0 - 1.0f + 2.0f * kUnskew;
+    const float y2 = y0 - 1.0f + 2.0f * kUnskew;
+
+    const int s = static_cast<int>(seed);
+    float total = 0.0f;
+
+    float t = 0.5f - x0 * x0 - y0 * y0;
+    if (t > 0.0f) {
+        t *= t;
+        const float* g = kGrad3[hashBits(i, j, s) % 12u];
+        total += t * t * (g[0] * x0 + g[1] * y0);
+    }
+    t = 0.5f - x1 * x1 - y1 * y1;
+    if (t > 0.0f) {
+        t *= t;
+        const float* g = kGrad3[hashBits(i + i1, j + j1, s) % 12u];
+        total += t * t * (g[0] * x1 + g[1] * y1);
+    }
+    t = 0.5f - x2 * x2 - y2 * y2;
+    if (t > 0.0f) {
+        t *= t;
+        const float* g = kGrad3[hashBits(i + 1, j + 1, s) % 12u];
+        total += t * t * (g[0] * x2 + g[1] * y2);
+    }
+    return total * 70.0f;
+}
+
+// Smooth noise in two dimensions, between 0 and 1.
 float noise2(float x, float y, uint32_t seed) {
-    const int ix = static_cast<int>(std::floor(x));
-    const int iy = static_cast<int>(std::floor(y));
-    const float fx = x - static_cast<float>(ix);
-    const float fy = y - static_cast<float>(iy);
-    const float tx = fx * fx * (3.0f - 2.0f * fx);
-    const float ty = fy * fy * (3.0f - 2.0f * fy);
-    const float a = hash01(ix,     iy,     static_cast<int>(seed));
-    const float b = hash01(ix + 1, iy,     static_cast<int>(seed));
-    const float c = hash01(ix,     iy + 1, static_cast<int>(seed));
-    const float d = hash01(ix + 1, iy + 1, static_cast<int>(seed));
-    const float top = a + (b - a) * tx;
-    const float bottom = c + (d - c) * tx;
-    return top + (bottom - top) * ty;
+    const float n = simplex2(x, y, seed) * 0.5f + 0.5f;
+    return n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
+}
+
+// Simplex noise in three dimensions.
+//
+// The caves are cut out of a three-dimensional volume, not drawn on a wall,
+// and this is the knife. The third axis is what lets a tunnel pinch shut and
+// open out again as you follow it, and what lets two tunnels that would have
+// run side by side forever drift together and join.
+static float simplex3(float x, float y, float z, uint32_t seed) {
+    constexpr float kSkew = 1.0f / 3.0f;
+    constexpr float kUnskew = 1.0f / 6.0f;
+
+    const float skew = (x + y + z) * kSkew;
+    const int i = static_cast<int>(std::floor(x + skew));
+    const int j = static_cast<int>(std::floor(y + skew));
+    const int k = static_cast<int>(std::floor(z + skew));
+
+    const float unskew = (static_cast<float>(i) + static_cast<float>(j) +
+                           static_cast<float>(k)) * kUnskew;
+    const float x0 = x - (static_cast<float>(i) - unskew);
+    const float y0 = y - (static_cast<float>(j) - unskew);
+    const float z0 = z - (static_cast<float>(k) - unskew);
+
+    // Which of the six triangles around the point we are in.
+    int i1, j1, k1, i2, j2, k2;
+    if (x0 >= y0) {
+        if (y0 >= z0)      { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
+        else if (x0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 0; k2 = 1; }
+        else               { i1 = 0; j1 = 0; k1 = 1; i2 = 1; j2 = 0; k2 = 1; }
+    } else {
+        if (y0 < z0)       { i1 = 0; j1 = 0; k1 = 1; i2 = 0; j2 = 1; k2 = 1; }
+        else if (x0 < z0)  { i1 = 0; j1 = 1; k1 = 0; i2 = 0; j2 = 1; k2 = 1; }
+        else               { i1 = 0; j1 = 1; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
+    }
+
+    const float x1 = x0 - static_cast<float>(i1) + kUnskew;
+    const float y1 = y0 - static_cast<float>(j1) + kUnskew;
+    const float z1 = z0 - static_cast<float>(k1) + kUnskew;
+    const float x2 = x0 - static_cast<float>(i2) + 2.0f * kUnskew;
+    const float y2 = y0 - static_cast<float>(j2) + 2.0f * kUnskew;
+    const float z2 = z0 - static_cast<float>(k2) + 2.0f * kUnskew;
+
+    const int s = static_cast<int>(seed);
+    float total = 0.0f;
+
+    float t = 0.6f - x0 * x0 - y0 * y0 - z0 * z0;
+    if (t > 0.0f) {
+        t *= t;
+        const float* g = kGrad3[hashBits(i, j, k + s) % 12u];
+        total += t * t * (g[0] * x0 + g[1] * y0 + g[2] * z0);
+    }
+    t = 0.6f - x1 * x1 - y1 * y1 - z1 * z1;
+    if (t > 0.0f) {
+        t *= t;
+        const float* g = kGrad3[hashBits(i + i1, j + j1, k + k1 + s) % 12u];
+        total += t * t * (g[0] * x1 + g[1] * y1 + g[2] * z1);
+    }
+    t = 0.6f - x2 * x2 - y2 * y2 - z2 * z2;
+    if (t > 0.0f) {
+        t *= t;
+        const float* g = kGrad3[hashBits(i + i2, j + j2, k + k2 + s) % 12u];
+        total += t * t * (g[0] * x2 + g[1] * y2 + g[2] * z2);
+    }
+    return total * 32.0f;
+}
+
+// Smooth noise in three dimensions, between 0 and 1.
+float noise3(float x, float y, float z, uint32_t seed) {
+    const float n = simplex3(x, y, z, seed) * 0.5f + 0.5f;
+    return n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
 }
 
 // Several layers of noise on top of each other. The detail is what makes a
@@ -122,21 +267,46 @@ float fbm2(float x, float y, uint32_t seed, int octaves) {
     return total / norm;
 }
 
-// Ridged noise in one dimension.
-//
-// Ordinary noise makes round humps. Fold it - the same trick as folding a
-// piece of paper - and it makes crests instead: a line that comes to a point
-// at the top and runs down on both sides. That is what a mountain range looks
-// like, so the ranges are built out of this rather than out of plain noise.
-float ridged1(float x, uint32_t seed, int octaves) {
+float fbm3(float x, float y, float z, uint32_t seed, int octaves) {
     float total = 0.0f;
     float amplitude = 1.0f;
     float frequency = 1.0f;
     float norm = 0.0f;
     for (int i = 0; i < octaves; ++i) {
+        total += noise3(x * frequency, y * frequency, z * frequency, seed + static_cast<uint32_t>(i) * 7919u) * amplitude;
+        norm += amplitude;
+        amplitude *= 0.5f;
+        frequency *= 2.0f;
+    }
+    return total / norm;
+}
+
+// Ridged noise in one dimension, as a multifractal.
+//
+// Ordinary noise makes round humps. Fold it - the same trick as folding a
+// piece of paper - and it makes crests instead: a line that comes to a point
+// at the top and runs down on both sides. That is what a mountain range looks
+// like, so the ranges are built out of this rather than out of plain noise.
+//
+// A multifractal is more than one folded octave stacked together, and each
+// octave is scaled by the one below it. Where the coarse fold already made a
+// crest, the fine fold is allowed to sharpen it; where the coarse fold was
+// flat, the fine fold is not allowed to make anything at all. That is what
+// turns a smooth mountain into a jagged ridge, with the detail running along
+// the crest instead of speckling the whole of it.
+float ridged1(float x, uint32_t seed, int octaves) {
+    float total = 0.0f;
+    float amplitude = 1.0f;
+    float frequency = 1.0f;
+    float norm = 0.0f;
+    float weight = 1.0f;
+    for (int i = 0; i < octaves; ++i) {
         float n = noise1(x * frequency, seed + static_cast<uint32_t>(i) * 7919u);
         n = 1.0f - std::fabs(2.0f * n - 1.0f);   // fold: the peaks are at the edges
-        total += n * n * amplitude;               // and square them, so the crests are sharp
+        n = n * n;                                // and square them, so the crests are sharp
+        n *= weight;                             // only sharpen what is already a crest
+        weight = std::min(1.0f, n * 2.5f);       // and hand the sharpness on downwards
+        total += n * amplitude;
         norm += amplitude;
         amplitude *= 0.5f;
         frequency *= 2.0f;
@@ -145,15 +315,91 @@ float ridged1(float x, uint32_t seed, int octaves) {
 }
 
 // The land at one column: where the ground starts, how deep the layers under
-// it go, and how much snow lies on top of it.
+// it go, how much snow lies on top of it, and what the weather has left on
+// the surface.
 struct Land {
     int surface;    // the first solid row
-    int snowRows;   // how many rows of snow sit on it
+    int profile;    // the first row of the ground itself, under snow and rubble
+    int snowRows;   // how many rows of snow sit on top of it
+    int screeRows;  // how many rows of rubble have slid down the cliffs above
     int soilRows;   // how deep the topsoil goes
     int dirtRows;   // how deep the packed dirt goes under the soil
+    Mat topMat;     // what the ground surface is made of
+    Mat screeMat;   // what the rubble is made of
 };
 
 // -- What the ground is made of ---------------------------------------------
+
+// The climate of a place: how cold it is and how wet it is.
+//
+// The cold comes from a slow wave running across the world, and the wetness
+// from a second, slower wave that does not care about the height at all.
+// Both are maps over the world rather than over the rock, so a whole region
+// shares one climate and the rock under it was laid down in that climate.
+static float climateTemperature(int worldX) {
+    return fbm1(static_cast<float>(worldX) / 8000.0f, kWorldSeed + 201u, 3);
+}
+
+static float climateMoisture(int worldX, int y) {
+    return fbm2(static_cast<float>(worldX) / 6000.0f,
+                static_cast<float>(y) / 4000.0f, kWorldSeed + 211u, 2);
+}
+
+// The rock's bands and its climate, sampled down a column.
+//
+// A band of rock is a hundred rows deep and does not change in eight rows, so
+// the noise is read every kStrataStep rows and joined up in between. The
+// ground is the biggest thing in the world, and this is what keeps reading it
+// affordable.
+struct Strata {
+    static constexpr int kStep = 16;
+
+    std::vector<float> band;
+    std::vector<float> temperature;
+    std::vector<float> moisture;
+
+    void reset(int height) {
+        const int count = height / kStep + 2;
+        band.assign(count, 0.0f);
+        temperature.assign(count, 0.0f);
+        moisture.assign(count, 0.0f);
+    }
+
+    // Read the noise down one column.
+    void sampleColumn(int worldX, int surface) {
+        const float fx = static_cast<float>(worldX);
+        const float cold = climateTemperature(worldX);
+        for (size_t i = 0; i < band.size(); ++i) {
+            const float fy = static_cast<float>(static_cast<int>(i) * kStep);
+
+            // Domain warping: the rock is read at a point that another noise
+            // has pushed about, so the bands fold and tilt the way real rock
+            // folds instead of lying in flat stripes. Two rounds of it, so
+            // the folds fold again.
+            const float qx = fbm2(fx / 200.0f, fy / 150.0f, kWorldSeed + 10u, 2);
+            const float qy = fbm2(fx / 200.0f, fy / 150.0f, kWorldSeed + 11u, 2);
+            const float rx = fbm2((fx + qx * 60.0f + 30.0f) / 200.0f,
+                                  (fy + qy * 60.0f + 15.0f) / 150.0f, kWorldSeed + 12u, 2);
+            const float ry = fbm2((fx + qx * 60.0f - 30.0f) / 200.0f,
+                                  (fy + qy * 60.0f - 15.0f) / 150.0f, kWorldSeed + 13u, 2);
+            band[i] = fbm2((fx + rx * 80.0f) / 220.0f,
+                           (fy + ry * 80.0f) / 140.0f, kWorldSeed + 31u, 3);
+            temperature[i] = cold;
+            moisture[i] = climateMoisture(worldX, static_cast<int>(i) * kStep);
+        }
+        (void)surface;
+    }
+};
+
+// Read a sampled value back, joined up in between the samples.
+static float readSample(const std::vector<float>& samples, int y) {
+    const float f = static_cast<float>(y) / static_cast<float>(Strata::kStep);
+    const int i = static_cast<int>(std::floor(f));
+    const float t = f - static_cast<float>(i);
+    const float a = samples[static_cast<size_t>(i)];
+    const float b = samples[static_cast<size_t>(i) + 1];
+    return a + (b - a) * t;
+}
 
 // The rock under the surface at a given depth. Soil on top, then packed dirt,
 // then stone with bands of limestone and basalt mixed through it.
@@ -161,15 +407,18 @@ struct Land {
 // The boundaries between the layers wander, because the depths they come from
 // wander. The rock bands are wide and flat, the way a layer of rock is, and
 // they tilt and bend rather than sitting in neat blobs.
-Mat layerMaterial(int worldX, int y, const Land& land) {
-    const int depth = y - land.surface;
-    if (depth <= land.soilRows) return Mat::Soil;
+//
+// The climate decides what the rock is: a hot dry place lays down sand, a
+// warm wet one lays down clay, and a cold one lays down plain limestone.
+Mat layerMaterial(const Land& land, int depth, float band, float temp, float moist) {
+    if (depth <= land.soilRows) return land.topMat;
     if (depth <= land.soilRows + land.dirtRows) return Mat::PackedDirt;
-
-    const float band = fbm2(static_cast<float>(worldX) / 170.0f, static_cast<float>(y) / 110.0f,
-                            kWorldSeed + 31u, 2);
-    if (band > 0.68f) return Mat::Basalt;
-    if (band < 0.32f) return Mat::Limestone;
+    if (band > 0.72f) return Mat::Basalt;
+    if (band < 0.22f) {
+        if (moist > 0.68f && temp > 0.35f) return Mat::Clay;
+        return Mat::Limestone;
+    }
+    if (moist < 0.34f && temp > 0.58f && band > 0.45f && band < 0.55f) return Mat::Sand;
     return Mat::Stone;
 }
 
@@ -184,9 +433,13 @@ Mat layerMaterial(int worldX, int y, const Land& land) {
 // solid rock under it.
 //
 // They are BIG: the noise that carves them is slow and wide, so a cavern is
-// hundreds of cells across rather than a pocket of air in the rock, and it is
-// warped before it is read, so it bends and curls and runs into the cavern
-// next to it instead of standing alone.
+// hundreds of cells across rather than a pocket of air in the rock.
+//
+// They are THREE-DIMENSIONAL. A cave system is not a shape on a wall, it is a
+// hole through a volume, and this generator cuts the volume. The third axis
+// drifts slowly along the world, so a tunnel pinches shut and opens out again
+// as you follow it, and two tunnels that would have run side by side forever
+// drift together and join.
 //
 // The field is read in DEPTH below the surface rather than in absolute rows,
 // so a cavern is the same distance under the ground everywhere. A flat layer
@@ -196,25 +449,46 @@ float caveField(int worldX, int y, int surface) {
     const float depth = static_cast<float>(y - surface);
     const float fx = static_cast<float>(worldX);
 
-    // The warp. The cave is read at a point that another noise has pushed
-    // about, so it winds instead of running in blobs. This is what joins one
-    // cavern to the next.
-    const float warpX = fbm2(fx / 420.0f, depth / 330.0f, kWorldSeed + 43u, 2) - 0.5f;
-    const float warpY = fbm2(fx / 380.0f, depth / 360.0f, kWorldSeed + 47u, 2) - 0.5f;
+    // The third axis: a slow drift along the world. This is the slice of the
+    // cave volume we are looking at. Because the slice moves as you travel,
+    // the tunnels are not an extrusion of one flat pattern - they breathe.
+    const float slice = fbm1(fx / 1500.0f, kWorldSeed + 71u, 2) * 5.0f;
 
-    // The cave itself: slow noise, so a cavern is a cavern.
-    return fbm2((fx + warpX * kCaveWarp) / kCaveWidth,
-                (depth + warpY * kCaveWarp) / kCaveHeight,
-                kWorldSeed + 41u, 3);
+    // The warp. The cave is read at a point that another noise has pushed
+    // about, so it winds and curls instead of running in round blobs. This is
+    // what joins one cavern to the next.
+    const float wx = (fbm3(fx / 380.0f, depth / 340.0f, slice / 320.0f, kWorldSeed + 43u, 2) - 0.5f) * kCaveWarp;
+    const float wy = (fbm3(fx / 360.0f, depth / 320.0f, slice / 300.0f, kWorldSeed + 47u, 2) - 0.5f) * kCaveWarp;
+    const float wz = (fbm3(fx / 340.0f, depth / 300.0f, slice / 280.0f, kWorldSeed + 49u, 2) - 0.5f) * kCaveWarp;
+
+    // The cave itself: slow, wide noise, so a cavern is a cavern.
+    const float cave = fbm3((fx + wx) / kCaveWidth,
+                             (depth + wy) / kCaveHeight,
+                             (slice + wz) / kCaveSlice,
+                             kWorldSeed + 41u, 2);
+
+    // And a folded noise on top of it. The fold puts the middle of the noise
+    // in long winding lines, and long winding lines connect: this is what
+    // turns a heap of separate hollows into a system with passages running
+    // through it.
+    float folded = fbm3((fx + wx * 0.7f) / (kCaveWidth * 0.55f),
+                         (depth + wy * 0.7f) / (kCaveHeight * 0.55f),
+                         (slice + wz * 0.7f) / (kCaveSlice * 0.55f),
+                         kWorldSeed + 53u, 2);
+    folded = 1.0f - std::fabs(2.0f * folded - 1.0f);
+
+    return cave * (1.0f - kCaveFold) + folded * kCaveFold;
 }
 
 // How much noise a cell needs before it counts as cave. The bar drops as the
-// rock goes deeper, so the caves grow as they go down.
+// rock goes deeper, so the caves grow as they go down, and it rises again in
+// the deepest rock, which is the solid floor the world stands on.
 float caveThreshold(int worldX, int y, int surface) {
     (void)worldX;
     const float depth = static_cast<float>(y - surface);
-    const float reach = std::min(1.0f, depth / 700.0f);
-    return kCaveThreshold - kCaveDepthBias * reach;
+    const float belt = std::min(1.0f, std::max(0.0f, (depth - 60.0f) / 400.0f));
+    const float basement = std::min(1.0f, std::max(0.0f, (depth - 900.0f) / 700.0f));
+    return kCaveThreshold - kCaveDepthBias * belt + kCaveBasement * basement;
 }
 
 // -- Drawing the hand-made patterns ----------------------------------------
@@ -425,22 +699,39 @@ void buildTestFloor(World& world, int floorTop) {
 
 // -- The shape of the land --------------------------------------------------
 //
-// The land is three things stacked on top of each other:
+// The land is four things stacked on top of each other:
 //
 //   * a great swell, thousands of columns wide, that makes the whole world
 //     rise and fall;
-//   * broad rolling hills on top of that; and
-//   * mountain ranges standing above both, with snow on their tops.
+//   * broad rolling hills on top of that;
+//   * mountain ranges standing above both, with snow on their tops; and
+//   * channels cut down through the hills, where the rain ran.
 //
-// All three are large. The land is meant to look like a landscape you walk
-// through for a long time, not a ripple you step over.
+// Then the weather gets at it. Rock that stands too steeply does not stand:
+// it slides down until the pile it makes is no steeper than loose rock can
+// hold, and what comes off the cliff ends up as a fan of rubble at its foot.
 
 // How many columns the mountain height is averaged over. The raw height curve
 // has sharp kinks where the noise folds, and a seven-row cliff in the ground
 // every few hundred columns is neither a hill nor a mountain - it is a wall,
 // and the snow on top of it slides off. Averaging takes the kink out and
-// leaves a slope.
-constexpr int kMountainSmoothing = 7;
+// leaves a slope, but only a little of it: a range whose faces are all gentle
+// is a lump, not a range.
+constexpr int kMountainSmoothing = 4;
+
+// How far a fan of rubble reaches from the cliff it came off. Loose rock
+// piles up at about one row down for every row across, so a cliff twenty
+// rows high has a fan that runs twenty columns out from its foot.
+constexpr int kScreeReach = 40;
+
+// The deepest fan of rubble there can be. Past this the cliff was too big to
+// be a cliff, and the rock under it did not come down in one piece.
+constexpr int kScreeMax = 16;
+
+// How steep a fan of rubble can stand. Loose rock slides until the pile is
+// no steeper than the angle of repose, which for rubble is about one row
+// down for every row and a half across.
+constexpr float kScreeRepose = 0.67f;
 
 // The height of the mountain at a column, before it is smoothed.
 static float rawMountainHeightAt(int worldX) {
@@ -471,7 +762,15 @@ float mountainHeightAt(int worldX) {
     return total / static_cast<float>(2 * kMountainSmoothing + 1);
 }
 
-static Land landAt(int worldX) {
+// The height of the ground at a column: the shape of the land on its own,
+// with no snow on it and no rubble under it.
+//
+// The channels are cut by the same trick the caves use. Folding the noise
+// puts its middle in long winding lines, and long winding lines are where
+// running water goes. The ground is cut down along them, and the deeper the
+// line cuts the wider the valley it leaves behind, which is what a valley cut
+// by a stream looks like.
+static float profileHeight(int worldX) {
     const float x = static_cast<float>(worldX);
 
     // The great swell: the whole world rising and falling over thousands of
@@ -483,35 +782,142 @@ static Land landAt(int worldX) {
 
     const float mountain = mountainHeightAt(worldX);
 
+    // The channels the rain cut.
+    const float flow = noise1(x / 620.0f, kWorldSeed + 67u);
+    const float fold = 1.0f - std::fabs(2.0f * flow - 1.0f);
+    const float channel = std::max(0.0f, fold - 0.88f) / 0.12f;
+    const float eroded = channel * channel * 30.0f *
+                         fbm1(x / 1600.0f, kWorldSeed + 68u, 2);
+
     // Lowland level. Everything else is measured up from here.
-    const float surface = 330.0f - swell * 30.0f - hills * 26.0f - mountain * 150.0f;
+    return 330.0f - swell * 30.0f - hills * 26.0f - mountain * 150.0f + eroded;
+}
+
+// The height of the ground at a column, remembered.
+//
+// How much rubble slides down a cliff depends on the shape of the ground a
+// little way either side, so the same column gets asked for over and over.
+// The answers are kept in a small cache of a fixed size, so a long walk
+// through the world cannot fill the machine's memory.
+int profileAt(int worldX) {
+    static constexpr int kSlots = 8192;   // a power of two, so the index is cheap
+    static std::vector<int> keys;
+    static std::vector<int> values;
+    if (keys.empty()) {
+        keys.assign(kSlots, INT_MIN);
+        values.assign(kSlots, 0);
+    }
+
+    const size_t slot = static_cast<size_t>(static_cast<uint32_t>(worldX) * 2654435761u) &
+                        static_cast<size_t>(kSlots - 1);
+    if (keys[slot] == worldX) return values[slot];
+
+    const int row = static_cast<int>(std::lround(profileHeight(worldX)));
+    keys[slot] = worldX;
+    values[slot] = row;
+    return row;
+}
+
+// How many rows of rubble have slid down the cliffs above this column.
+//
+// Loose rock does not stand in a vertical face. It slides until the pile it
+// makes is no steeper than the angle of repose, and what comes off the cliff
+// piles up at the foot of it. So every cliff has a fan of rubble below it,
+// and the fan is as deep as the cliff is tall.
+int screeRowsAt(int worldX) {
+    const int here = profileAt(worldX);
+    int deepest = 0;
+    for (int d = 1; d <= kScreeReach; ++d) {
+        // A cliff on the left: the ground there stands this many rows above
+        // us. Only the part of it that is steeper than the rubble can hold
+        // comes down, and the rest has already spread out. So the fan at this
+        // column is the height of the cliff less what the rubble has already
+        // run out over the ground between.
+        const int left = here - profileAt(worldX - d) - static_cast<int>(d * kScreeRepose);
+        const int right = here - profileAt(worldX + d) - static_cast<int>(d * kScreeRepose);
+        deepest = std::max(deepest, std::max(left, right));
+    }
+    return std::min(deepest, kScreeMax);
+}
+
+// The land at one column: where the ground starts, how deep the layers under
+// it go, how much snow lies on top of it, and what the weather has left on
+// the surface.
+static Land landAt(int worldX) {
+    const float x = static_cast<float>(worldX);
 
     Land land;
-    land.surface = static_cast<int>(std::lround(surface));
+
+    // The shape of the ground, and the rubble that has slid down it.
+    const int profile = profileAt(worldX);
+    land.screeRows = screeRowsAt(worldX);
+
+    // The climate of the country this column is in.
+    const float temp = climateTemperature(worldX);
+    const float moist = climateMoisture(worldX, profile);
+
+    // How high this column is. High ground is colder and thinner than the
+    // country around it, and the soil does not reach up a mountain: what is
+    // on a mountain is rock and rubble, whatever the weather is doing in the
+    // valley below.
+    const float mountain = mountainHeightAt(worldX);
+    const bool high = mountain > 0.08f;
 
     // How deep the soil and the packed dirt go under the surface.
     //
     // These wander from column to column instead of stepping. A depth that
     // changes every few columns draws a staircase across the world, and a
     // staircase is the surest sign that a machine made something.
+    //
+    // On a mountain the soil is thin, and the rock comes up close under the
+    // turf: a mountain with forty rows of dirt under it is a lump of earth
+    // with a bump on top, not a mountain.
     const float soil = noise1(x / 38.0f, kWorldSeed + 61u);
     const float dirt = noise1(x / 74.0f, kWorldSeed + 62u);
     land.soilRows = 1 + static_cast<int>(soil * 3.0f);
-    land.dirtRows = 12 + static_cast<int>(dirt * 26.0f);
+    land.dirtRows = high ? 1 + static_cast<int>(dirt * 5.0f)
+                         : 12 + static_cast<int>(dirt * 26.0f);
+
+    // What the ground surface is made of.
+    //
+    // A hot dry country is sand. A wet one is mud. A warm damp one is clay.
+    // A cold one is frozen ground. A mountain is bare rock. Everything else
+    // is ordinary soil.
+    if (high) {
+        land.topMat = Mat::Stone;
+        land.screeMat = Mat::Gravel;
+    } else if (temp > 0.58f && moist < 0.36f) {
+        land.topMat = Mat::Sand;
+        land.screeMat = Mat::Sand;
+    } else if (moist > 0.64f) {
+        land.topMat = Mat::Mud;
+        land.screeMat = Mat::Gravel;
+    } else if (temp > 0.52f && moist > 0.52f) {
+        land.topMat = Mat::Clay;
+        land.screeMat = Mat::Gravel;
+    } else if (temp < 0.28f) {
+        land.topMat = Mat::PackedDirt;
+        land.screeMat = Mat::Gravel;
+    } else {
+        land.topMat = Mat::Soil;
+        land.screeMat = Mat::Gravel;
+    }
 
     // Snow belongs to the mountain tops and to nothing else.
     //
-    // It is decided by the mountain itself, not by a line drawn across the
-    // map. A fixed line puts snow on a hill in the lowlands whenever the
-    // ground happens to reach it, and leaves a bare peak whenever the hills
-    // happen to be high there - which is exactly how snow ended up all over
-    // the surface instead of up on the mountains.
-    const float m = mountain;
-    if (m > 0.90f) land.snowRows = 5;
-    else if (m > 0.80f) land.snowRows = 4;
-    else if (m > 0.68f) land.snowRows = 3;
-    else if (m > 0.55f) land.snowRows = 2;
-    else if (m > 0.42f) land.snowRows = 1;
+    // It is decided by the mountain itself and by how cold the country is,
+    // not by a line drawn across the map. A fixed line puts snow on a hill
+    // in the lowlands whenever the ground happens to reach it, and leaves a
+    // bare peak whenever the hills happen to be high there - which is exactly
+    // how snow ended up all over the surface instead of up on the mountains.
+    const float cold = 1.0f - temp;
+    const float line = 0.42f - cold * 0.22f;   // the height the snow starts at
+    const float m = mountain - line;
+    if (m > 0.48f) land.snowRows = 5;
+    else if (m > 0.38f) land.snowRows = 4;
+    else if (m > 0.26f) land.snowRows = 3;
+    else if (m > 0.13f) land.snowRows = 2;
+    else if (m > 0.0f) land.snowRows = 1;
     else land.snowRows = 0;
 
     // The edge of the snow is ragged, not a clean line. The depth of the
@@ -522,6 +928,10 @@ static Land landAt(int worldX) {
         if (fray < 0.34f) --land.snowRows;
         else if (fray > 0.72f) ++land.snowRows;
     }
+
+    // The ground itself starts under the snow and the rubble.
+    land.profile = profile;
+    land.surface = profile - land.screeRows - land.snowRows;
     return land;
 }
 
@@ -541,12 +951,15 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     if (height <= 0) return;
 
     // 1. The ground: a surface that follows the height curve, layered soil,
-    //    dirt and rock underneath, snow on the mountain tops, bedrock on the
-    //    floor.
+    //    dirt and rock underneath, snow on the mountain tops, rubble at the
+    //    foot of the cliffs, bedrock on the floor.
+    Strata strata;
+    strata.reset(height);
     for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
         const int worldX = baseX + lx;
         const Land land = landAt(worldX);
         const int surface = land.surface;
+        strata.sampleColumn(worldX, land.profile);
         for (int y = 0; y < height; ++y) {
             Mat m = Mat::Air;
             if (y >= surface) {
@@ -554,8 +967,13 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
                     m = Mat::Bedrock;                    // the floor of the world
                 } else if (y < surface + land.snowRows) {
                     m = Mat::Snow;                       // snow on the mountain tops
+                } else if (y < surface + land.snowRows + land.screeRows) {
+                    m = land.screeMat;                   // rubble at the foot of a cliff
                 } else {
-                    m = layerMaterial(worldX, y, land);
+                    m = layerMaterial(land, y - land.profile,
+                                      readSample(strata.band, y),
+                                      readSample(strata.temperature, y),
+                                      readSample(strata.moisture, y));
                 }
             }
             const size_t cell = chunk.index(lx, y);
@@ -601,15 +1019,20 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     //    lumpy, the way a pocket of loose sand in the rock is. A smooth oval
     //    with an even edge looks like it was stamped out.
     static const Mat kPocketMaterials[3] = {Mat::Sand, Mat::Gravel, Mat::Clay};
-    for (int i = 0; i < 4; ++i) {
-        const int kind = static_cast<int>(hash01(index, i, 91) * 3.0f) % 3;
-        const Mat m = kPocketMaterials[kind];
+    for (int i = 0; i < 6; ++i) {
+        const int kindHash = static_cast<int>(hash01(index, i, 91));
+        const float temp = climateTemperature(baseX + 10);
+        const float moist = climateMoisture(baseX + 10, 400);
+        Mat m = Mat::Gravel;
+        if (temp > 0.62f && moist < 0.38f) m = Mat::Sand;
+        else if (moist > 0.58f && temp > 0.4f) m = Mat::Clay;
+        else m = kPocketMaterials[kindHash % 3];
         const int lx = 10 + static_cast<int>(hash01(index, i, 92) * (Chunk::WIDTH - 20.0f));
-        const int halfWidth = 6 + static_cast<int>(hash01(index, i, 93) * 9.0f);
-        const int halfHeight = 4 + static_cast<int>(hash01(index, i, 94) * 6.0f);
+        const int halfWidth = 8 + static_cast<int>(hash01(index, i, 93) * 12.0f);
+        const int halfHeight = 6 + static_cast<int>(hash01(index, i, 94) * 8.0f);
         // Buried well down, in the deep rock where the caves are.
-        const int centreY = groundRow(baseX + lx) + 40 +
-                            static_cast<int>(hash01(index, i, 95) * 170.0f);
+        const int centreY = groundRow(baseX + lx) + 60 +
+                            static_cast<int>(hash01(index, i, 95) * 300.0f);
         for (int dy = -halfHeight; dy <= halfHeight; ++dy) {
             for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
                 const float nx = static_cast<float>(dx) / static_cast<float>(halfWidth);

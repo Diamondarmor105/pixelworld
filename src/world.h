@@ -77,7 +77,7 @@ public:
     // everything below - the caves, the lava chambers, the buried pockets - has
     // room to go down. A shallow world squeezes all of that into a thin band
     // of rock under the player's feet.
-    static constexpr int DEFAULT_HEIGHT = 1024;
+    static constexpr int DEFAULT_HEIGHT = 2048;
 
     explicit World(int height = DEFAULT_HEIGHT);
 

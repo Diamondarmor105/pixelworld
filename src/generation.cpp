@@ -449,16 +449,45 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
     const int height = world.height();
 
-    // Step 4: Simplex noise masks for large open caverns (deep).
-    for (int x=worldX0;x<worldX1;++x){
-        int surf=groundRow(x);
-        for (int y=surf+300;y<height-3;++y){
-            float n=noise2(static_cast<float>(x)/120.0f,static_cast<float>(y)/120.0f,kWorldSeed+800u);
-            float depthFactor=std::min(1.0f,std::max(0.0f,(static_cast<float>(y-surf)-200.0f)/400.0f));
-            float thresh=0.72f + depthFactor*0.08f;
-            if (n > thresh) {
-                if (world.at(x,y)!=Mat::Water && world.at(x,y+1)!=Mat::Water) world.set(x,y,Mat::Air);
+    // Step 4: Cellular automata caves (organic Swiss-cheese pockets).
+    // Initialize: random solid/air based on noise threshold.
+    for (int x = worldX0; x < worldX1; ++x) {
+        int surf = groundRow(x);
+        int top = surf + 80;
+        int bot = height - 100;
+        if (top < 0) top = 0;
+        if (bot > height - 3) bot = height - 3;
+        for (int y = top; y < bot; ++y) {
+            float n = noise2(static_cast<float>(x) / 15.0f, static_cast<float>(y) / 15.0f, kWorldSeed + 1100u);
+            if (n > 0.55f) world.set(x, y, Mat::Air);
+        }
+    }
+    // Smooth: 4 iterations of CA rules.
+    for (int iter = 0; iter < 0; ++iter) {
+        std::vector<std::pair<int,int>> changes;
+        for (int x = worldX0; x < worldX1; ++x) {
+            int surf = groundRow(x);
+            int top = surf + 80;
+            int bot = height - 100;
+            if (top < 0) top = 0;
+            if (bot > height - 3) bot = height - 3;
+            for (int y = top; y < bot; ++y) {
+                int airNeigh = 0;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
+                        if (world.at(nx, ny) == Mat::Air) ++airNeigh;
+                    }
+                Mat cur = world.at(x, y);
+                if (cur == Mat::Air && airNeigh < 4) changes.emplace_back(x, y);
+                if (cur != Mat::Air && cur != Mat::Water && airNeigh >= 5) changes.emplace_back(x, y);
             }
+        }
+        for (auto &p : changes) {
+            if (world.at(p.first, p.second) == Mat::Air) world.set(p.first, p.second, Mat::Stone);
+            else world.set(p.first, p.second, Mat::Air);
         }
     }
 

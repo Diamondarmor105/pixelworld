@@ -459,7 +459,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         if (bot > height - 3) bot = height - 3;
         for (int y = top; y < bot; ++y) {
             float n = noise2(static_cast<float>(x) / 15.0f, static_cast<float>(y) / 15.0f, kWorldSeed + 1100u);
-            if (n > 0.55f) world.set(x, y, Mat::Air);
+            if (n > 0.62f) world.set(x, y, Mat::Air);
         }
     }
     // Smooth: 4 iterations of CA rules.

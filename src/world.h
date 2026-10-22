@@ -72,7 +72,12 @@ public:
     static constexpr int CHUNK_WIDTH = Chunk::WIDTH;
 
     // How tall the world is, in cells. The endless part is sideways.
-    static constexpr int DEFAULT_HEIGHT = 512;
+    //
+    // The world is deep on purpose: the ground sits in the top half of it, and
+    // everything below - the caves, the lava chambers, the buried pockets - has
+    // room to go down. A shallow world squeezes all of that into a thin band
+    // of rock under the player's feet.
+    static constexpr int DEFAULT_HEIGHT = 1024;
 
     explicit World(int height = DEFAULT_HEIGHT);
 

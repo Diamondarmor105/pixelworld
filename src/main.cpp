@@ -1106,7 +1106,7 @@ bool checkSettledSceneStaysStill() {
 // Self-test: generating the same chunk twice must give exactly the same
 // chunk, or the world would change shape when you walked away and came back.
 bool checkChunksAreDeterministic() {
-    const int height = 512;
+    const int height = World::DEFAULT_HEIGHT;
     Chunk first(height);
     Chunk second(height);
     generateChunk(7, first);
@@ -1135,7 +1135,7 @@ bool checkTerrainVaries() {
 
 // Self-test: every chunk must have caves in it - air under the surface.
 bool checkCavesExist() {
-    World world(512);
+    World world;
     const int chunks = 20;
     int withCaves = 0;
     for (int i = 0; i < chunks; ++i) {
@@ -1164,7 +1164,7 @@ bool checkCavesExist() {
 // hills happened to be high there. Now the snow follows the mountain itself,
 // and this checks that it does.
 bool checkSnowStaysOnTheMountainTops() {
-    World world(512);
+    World world;
     const int chunks = 40;
     for (int i = 0; i < chunks; ++i) {
         Chunk& chunk = world.chunk(i);
@@ -1182,7 +1182,7 @@ bool checkSnowStaysOnTheMountainTops() {
     for (int i = 0; i < width / 10; ++i) {
         const int x = columns[i].second;
         if (mountainHeightAt(x) > 0.0f) continue;   // a mountain can be down there
-        for (int y = 0; y < 512; ++y) {
+        for (int y = 0; y < world.height(); ++y) {
             if (world.at(x, y) == Mat::Snow) { ++snowyLowland; break; }
         }
     }
@@ -1195,7 +1195,7 @@ bool checkSnowStaysOnTheMountainTops() {
     for (int x = 0; x < width; ++x) {
         int snowTop = -1;
         int snowRows = 0;
-        for (int y = 0; y < 512; ++y) {
+        for (int y = 0; y < world.height(); ++y) {
             if (world.at(x, y) == Mat::Snow) {
                 if (snowTop < 0) snowTop = y;
                 ++snowRows;
@@ -1210,7 +1210,7 @@ bool checkSnowStaysOnTheMountainTops() {
         const int capTop = groundRow(x);
         const int capBottom = capTop + snowRowsAt(x);
         const bool insideBand = snowTop >= capTop && snowTop + snowRows <= capBottom;
-        const bool restsOnGround = snowTop + snowRows < 512 &&
+        const bool restsOnGround = snowTop + snowRows < world.height() &&
                                    world.at(x, snowTop + snowRows) != Mat::Air;
         if (!insideBand || !restsOnGround) ++snowNotOnTop;
     }
@@ -1230,7 +1230,7 @@ bool checkSnowStaysOnTheMountainTops() {
 // small pockets. Now they run well down under the ground, take up less of it,
 // and form a few large caverns that run into each other.
 bool checkCavesAreDeepAndJoinedUp() {
-    World world(512);
+    World world;
     const int chunks = 12;
     const int width = chunks * Chunk::WIDTH;
     for (int i = 0; i < chunks; ++i) {
@@ -1239,7 +1239,7 @@ bool checkCavesAreDeepAndJoinedUp() {
     }
 
     // Every pocket of air under the ground, and which cavern it belongs to.
-    std::vector<uint8_t> cave(static_cast<size_t>(width) * 512, 0);
+    std::vector<uint8_t> cave(static_cast<size_t>(width) * world.height(), 0);
     int shallowest = 1 << 30;
     long long caveCells = 0;
     long long groundCells = 0;
@@ -1247,12 +1247,12 @@ bool checkCavesAreDeepAndJoinedUp() {
         // A pond digs a shallow bowl into the ground on purpose, so the
         // columns with water in them are left out of the count.
         bool wet = false;
-        for (int y = 0; y < 512; ++y) {
+        for (int y = 0; y < world.height(); ++y) {
             if (world.at(x, y) == Mat::Water) { wet = true; break; }
         }
         if (wet) continue;
         const int surface = groundRow(x);
-        for (int y = surface + 1; y < 509; ++y) {
+        for (int y = surface + 1; y < world.height() - 3; ++y) {
             if (world.at(x, y) == Mat::Air) {
                 cave[static_cast<size_t>(y) * width + x] = 1;
                 ++caveCells;
@@ -1269,7 +1269,7 @@ bool checkCavesAreDeepAndJoinedUp() {
     long long biggest = 0;
     std::vector<int> stack;
     for (int x = 0; x < width; ++x) {
-        for (int y = 0; y < 512; ++y) {
+        for (int y = 0; y < world.height(); ++y) {
             const size_t start = static_cast<size_t>(y) * width + x;
             if (!cave[start]) continue;
             ++caverns;
@@ -1288,7 +1288,7 @@ bool checkCavesAreDeepAndJoinedUp() {
                 for (int d = 0; d < 4; ++d) {
                     const int nx = cx + dx[d];
                     const int ny = cy + dy[d];
-                    if (nx < 0 || nx >= width || ny < 0 || ny >= 512) continue;
+                    if (nx < 0 || nx >= width || ny < 0 || ny >= world.height()) continue;
                     const size_t next = static_cast<size_t>(ny) * width + nx;
                     if (!cave[next]) continue;
                     cave[next] = 0;
@@ -1301,8 +1301,9 @@ bool checkCavesAreDeepAndJoinedUp() {
 
     const double share = 100.0 * static_cast<double>(caveCells) /
                          static_cast<double>(std::max(1LL, caveCells + groundCells));
-    const bool passed = shallowest >= 25 && share < 12.0 && biggest >= 2000 &&
-                        caverns <= chunks * 3;
+    // Big caverns, deep down, taking up a large area - not small pockets.
+    const bool passed = shallowest >= 25 && share >= 12.0 && biggest >= 20000 &&
+                        caverns <= chunks * 4;
     std::printf("caves are deep and joined up: %s (shallowest %d rows down, %.1f%% of the "
                 "rock hollow, %d caverns, biggest %lld cells)\n",
                 passed ? "PASS" : "FAIL", shallowest, share, caverns, biggest);
@@ -1313,7 +1314,7 @@ bool checkCavesAreDeepAndJoinedUp() {
 // it would be cut in half by the chunk boundary. And it must really be drawn:
 // the material in the chunk has to match the pattern.
 bool checkStructuresStayInTheirChunk() {
-    World world(512);
+    World world;
     int total = 0;
     int outside = 0;
     int wrong = 0;
@@ -1512,13 +1513,13 @@ bool checkSandSinksThroughWater() {
 // and the water ends up in the deepest step with the shallow ones left dry; if
 // the floor is not walled, a cave under the pond swallows the water whole.
 bool checkPondKeepsItsWater() {
-    World world(512);
+    World world;
     generateChunksAround(world, 0, 6);
 
     // The surface row of the water in every column that has any.
     std::map<int, int> before;
     for (int x = 0; x < 6 * Chunk::WIDTH; ++x) {
-        for (int y = 0; y < 512; ++y) {
+        for (int y = 0; y < world.height(); ++y) {
             if (world.at(x, y) != Mat::Water) continue;
             before[x] = y;
             break;
@@ -1530,7 +1531,7 @@ bool checkPondKeepsItsWater() {
     auto pondWater = [&world](const std::map<int, int>& rows) {
         float total = 0.0f;
         for (const auto& entry : rows) {
-            for (int y = entry.second; y < entry.second + 16 && y < 512; ++y) {
+            for (int y = entry.second; y < entry.second + 16 && y < world.height(); ++y) {
                 if (world.at(entry.first, y) == Mat::Water) total += world.mass(entry.first, y);
             }
         }
@@ -1556,7 +1557,7 @@ bool checkPondKeepsItsWater() {
     int moved = 0;
     for (const auto& entry : before) {
         int row = -1;
-        for (int y = 0; y < 512; ++y) {
+        for (int y = 0; y < world.height(); ++y) {
             if (world.at(entry.first, y) == Mat::Water) { row = y; break; }
         }
         if (row != entry.second) ++moved;
@@ -1576,7 +1577,7 @@ bool checkPondKeepsItsWater() {
 // lowest row that has anything in it - a ruined wall whose base has eroded
 // away still has to stand on the part that is left.
 bool checkStructuresStandOnTheGround() {
-    World world(512);
+    World world;
     int total = 0;
     int floating = 0;
     int buried = 0;
@@ -1699,7 +1700,7 @@ bool checkTreesDoNotBlockHeads() {
 // Self-test: what you break stays broken. Blow a hole in one chunk, build
 // fifty more chunks of world, and the hole must still be there.
 bool checkDamageSurvives() {
-    World world(512);
+    World world;
     Chunk& chunk = world.chunk(3);
     generateChunk(3, chunk);
 

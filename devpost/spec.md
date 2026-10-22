@@ -66,7 +66,7 @@ Carried forward from `prd.md > Look and Feel` and `scope.md > Inspiration & Iden
 Each component is one pair of files in `src/`, so `5-build` can build and test them one at a time.
 
 ### Grid and world storage
-The world is a fixed-height, endless-width grid of one-byte material IDs, split into **chunks** of 256 wide × 512 tall (512 is the world height; the top ~180 rows are sky). A chunk is generated on demand from its index and kept in an in-memory map once created, so player damage survives. Reading a pixel is `materialAt(worldX, worldY)`; writing is `setMaterial(worldX, worldY, id)`.
+The world is a fixed-height, endless-width grid of one-byte material IDs, split into **chunks** of 256 wide × 512 tall (512 is the world height; the ground sits between row 158 and row 356, so everything above it is sky). A chunk is generated on demand from its index and kept in an in-memory map once created, so player damage survives. Reading a pixel is `materialAt(worldX, worldY)`; writing is `setMaterial(worldX, worldY, id)`.
 PRD ref: `prd.md > The world, generation, and the camera`.
 
 ### World generation

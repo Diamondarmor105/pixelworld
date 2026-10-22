@@ -569,6 +569,30 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         }
     }
 
+    // Phase 3: Organic open caves via ridged noise (absolute value of 2D
+    // noise). Produces webbed/marble-like cavern networks. Threshold scales
+    // with depth: strict near the surface, wider deep underground.
+    for (int x = worldX0; x < worldX1; ++x) {
+        int surface = groundRow(x);
+        for (int y = surface + 30; y < height - 3; ++y) {
+            float depth = static_cast<float>(y - surface);
+            float belt = std::min(1.0f, std::max(0.0f, (depth - 40.0f) / 300.0f));
+            float thresh = 0.06f + belt * 0.12f;
+            float n = noise2(static_cast<float>(x) / 90.0f, static_cast<float>(y) / 90.0f, kWorldSeed + 700u);
+            float ridged = std::fabs(n - 0.5f) * 2.0f;  // 0..1, ridges at 0
+            // Actually use absolute value of centered noise:
+            float centered = noise2(static_cast<float>(x) / 90.0f, static_cast<float>(y) / 90.0f, kWorldSeed + 700u) * 2.0f - 1.0f;
+            float ridgedVal = std::fabs(centered);
+            if (ridgedVal < thresh) {
+                if (world.at(x, y) != Mat::Water && world.at(x, y + 1) != Mat::Water) {
+                    int surf = groundRow(x);
+                    if (y >= surf + 20) world.set(x, y, Mat::Air);
+                }
+            }
+        }
+    }
+    // Phase 3 done.
+
     // Pass 5: Cellular automata smoothing — remove isolated air cells and
     // floating scraps (a cell is removed if it has too few air neighbours).
     // Run a few iterations.

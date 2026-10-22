@@ -2024,15 +2024,59 @@ int runSelfTest() {
 
 }  // namespace
 
+static int runShot(int argc, char** argv) {
+    // Usage: --shot <out.png> [width] [height] [topRow] [scale]
+    const char* out = (argc > 2) ? argv[2] : "shot.png";
+    int width = (argc > 3) ? std::atoi(argv[3]) : 1024;
+    int height = (argc > 4) ? std::atoi(argv[4]) : 2048;
+    int topRow = (argc > 5) ? std::atoi(argv[5]) : 0;
+    int scale = (argc > 6) ? std::atoi(argv[6]) : 1;
+    if (width < 64) width = 64;
+    if (height < 64) height = 64;
+
+    int chunks = (width + Chunk::WIDTH - 1) / Chunk::WIDTH;
+    World world;
+    generateChunksAround(world, (chunks / 2) * Chunk::WIDTH, chunks / 2 + 2);
+
+    int worldX0 = 0;
+    Image image = GenImageColor(width, height, materialInfo(Mat::Air).color);
+    Color* pixels = static_cast<Color*>(image.data);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            Mat m = world.at(worldX0 + x, topRow + y);
+            Color color = materialInfo(m).color;
+            if (materialInfo(m).flows || materialInfo(m).rises) {
+                float mass = world.mass(worldX0 + x, topRow + y);
+                float full = mass > 1.0f ? 1.0f : (mass < 0.0f ? 0.0f : mass);
+                Color air = materialInfo(Mat::Air).color;
+                float mix = 0.3f + 0.7f * full;
+                color.r = static_cast<unsigned char>(air.r + (color.r - air.r) * mix);
+                color.g = static_cast<unsigned char>(air.g + (color.g - air.g) * mix);
+                color.b = static_cast<unsigned char>(air.b + (color.b - air.b) * mix);
+                color.a = 255;
+            }
+            pixels[static_cast<size_t>(y) * width + x] = color;
+        }
+    }
+    if (scale > 1) ImageResize(&image, width / scale, height / scale);
+    ExportImage(image, out);
+    UnloadImage(image);
+    std::printf("wrote %s (%dx%d, topRow=%d)\n", out, width / (scale > 1 ? scale : 1),
+                height / (scale > 1 ? scale : 1), topRow);
+    return 0;
+}
 int main(int argc, char** argv) {
     bool smoke = false;
     bool selftest = false;
+    bool shot = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--selftest") == 0) selftest = true;
         else if (std::strcmp(argv[i], "--smoke") == 0) smoke = true;
+        else if (std::strcmp(argv[i], "--shot") == 0) shot = true;
     }
 
     if (selftest) return runSelfTest();
+    if (shot) return runShot(argc, argv);
     return runGame(smoke);
 }

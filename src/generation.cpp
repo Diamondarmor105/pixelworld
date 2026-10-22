@@ -345,7 +345,10 @@ struct Strata {
             const float beds = fbm2((fx + rx * 70.0f) / 200.0f,
                                     (fy + ry * 70.0f) / 130.0f,
                                     kWorldSeed + 31u, 3);
-            band[i] = beds * 0.7f + depthGrad * 0.3f;
+            float b = beds * 0.7f + depthGrad * 0.3f;
+            // Sharpen transitions so beds have crisp edges.
+            b = b * b * (3.0f - 2.0f * b);
+            band[i] = b;
             temperature[i] = cold;
             moisture[i] = climateMoisture(worldX, static_cast<int>(i) * kStep);
         }
@@ -383,11 +386,15 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
         if (band > 0.5f) return Mat::Basalt;
         return Mat::Obsidian;
     }
+    // Obsidian veins deep down (volcanic glass).
+    if (depth > 700 && band > 0.85f && band < 0.88f) return Mat::Obsidian;
     if (band > 0.90f) return Mat::Basalt;                       // dark seams
     if (band < 0.20f) {
         if (moist > 0.60f && temp > 0.30f) return Mat::Clay;    // wet beds
         return Mat::Limestone;                                  // pale beds
     }
+    // Sandstone-like bands in dry regions.
+    if (band > 0.40f && band < 0.46f && moist < 0.45f) return Mat::Sand;
     if (band > 0.62f && band < 0.66f && moist < 0.42f && temp > 0.45f) return Mat::Sand;
     if (band > 0.74f && band < 0.77f) return Mat::Gravel;
     return Mat::Stone;

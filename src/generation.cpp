@@ -14,49 +14,6 @@ namespace {
 // are, where the caves run, what is buried where.
 constexpr uint32_t kWorldSeed = 0x9E3779B9u;
 
-// How far below the surface the caves begin. The roof over a cave is solid
-// ground, so a pond on the surface has something to stand on and the hills do
-// not all cave in.
-constexpr int kCaveRoof = 30;
-
-// How much of the noise has to be there before a cell counts as cave. The
-// higher this is, the rarer the caves are.
-constexpr float kCaveThreshold = 0.62f;
-
-// How much the caves open up as they go down. The rock near the surface is
-// nearly solid; the rock below it is hollow in big caverns. Without this the
-// deep world would be a wall of stone with a few pockets in it.
-constexpr float kCaveDepthBias = 0.08f;
-
-// How much the caves close up again in the deepest rock. The bottom of the
-// world is the bedrock everything else is built on, and it is solid.
-constexpr float kCaveBasement = 0.12f;
-
-// How wide a cave is, and how tall. These are in cells of the noise's own
-// space, so a cavern comes out roughly this many cells across. They are big
-// on purpose: a cave is a place you can walk into, not a pocket of air in
-// the rock.
-constexpr float kCaveWidth = 900.0f;
-constexpr float kCaveHeight = 700.0f;
-
-// The third axis of the cave volume: how thick the slice of rock we are
-// cutting is. Bigger means the tunnels are longer before they pinch.
-constexpr float kCaveSlice = 600.0f;
-
-// How far the warp pushes the cave noise about, in cells. This is what makes a
-// cavern wind and curl instead of sitting in the rock as a lump.
-constexpr float kCaveWarp = 150.0f;
-
-// How many octaves of noise the cave field is built from. Each extra octave
-// adds finer detail, and finer detail is what breaks a big cavern into a
-// heap of small ones.
-constexpr int kCaveOctaves = 1;
-
-// The cave field is read every this many rows and filled in between. The
-// field is smooth over hundreds of rows, so the shape is the same and it
-// costs a quarter of the noise work.
-constexpr int kCaveStep = 8;
-
 // -- Noise -----------------------------------------------------------------
 //
 // Everything the generator decides comes out of these. They are not random:
@@ -236,8 +193,6 @@ float noise3(float x, float y, float z, uint32_t seed) {
     return n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
 }
 
-// Several layers of noise on top of each other. The detail is what makes a
-// surface look natural rather than smooth.
 float fbm1(float x, uint32_t seed, int octaves) {
     float total = 0.0f;
     float amplitude = 1.0f;
@@ -327,6 +282,7 @@ struct Land {
     Mat screeMat;   // what the rubble is made of
 };
 
+
 // -- What the ground is made of ---------------------------------------------
 
 // The climate of a place: how cold it is and how wet it is.
@@ -371,18 +327,25 @@ struct Strata {
         for (size_t i = 0; i < band.size(); ++i) {
             const float fy = static_cast<float>(static_cast<int>(i) * kStep);
 
-            // Domain warping: the rock is read at a point that another noise
-            // has pushed about, so the bands fold and tilt the way real rock
-            // folds instead of lying in flat stripes. Two rounds of it, so
-            // the folds fold again.
-            const float qx = fbm2(fx / 200.0f, fy / 150.0f, kWorldSeed + 10u, 2);
-            const float qy = fbm2(fx / 200.0f, fy / 150.0f, kWorldSeed + 11u, 2);
-            const float rx = fbm2((fx + qx * 60.0f + 30.0f) / 200.0f,
-                                  (fy + qy * 60.0f + 15.0f) / 150.0f, kWorldSeed + 12u, 2);
-            const float ry = fbm2((fx + qx * 60.0f - 30.0f) / 200.0f,
-                                  (fy + qy * 60.0f - 15.0f) / 150.0f, kWorldSeed + 13u, 2);
-            band[i] = fbm2((fx + rx * 80.0f) / 220.0f,
-                           (fy + ry * 80.0f) / 140.0f, kWorldSeed + 31u, 3);
+            // The rock is laid down in beds, and the beds are bent by the
+            // weight of the rock above them. Domain warping folds the stack
+            // so the beds tilt and buckle instead of lying in flat stripes,
+            // but the warp stays smaller than a bed so the layers survive.
+            const float qx = (fbm2(fx / 260.0f, fy / 200.0f, kWorldSeed + 10u, 2) - 0.5f) * 2.0f;
+            const float qy = (fbm2(fx / 260.0f, fy / 200.0f, kWorldSeed + 11u, 2) - 0.5f) * 2.0f;
+            const float rx = (fbm2((fx + qx * 50.0f) / 230.0f, (fy + qy * 50.0f) / 170.0f,
+                                    kWorldSeed + 12u, 2) - 0.5f) * 2.0f;
+            const float ry = (fbm2((fx - qy * 40.0f) / 230.0f, (fy - qx * 40.0f) / 170.0f,
+                                    kWorldSeed + 13u, 2) - 0.5f) * 2.0f;
+
+            // A slow, deep vertical gradient gives the beds their overall
+            // order: different rock types at different depths, the way real
+            // strata are stacked. The warped noise on top breaks them up.
+            const float depthGrad = std::min(1.0f, std::max(0.0f, fy / 1800.0f));
+            const float beds = fbm2((fx + rx * 70.0f) / 200.0f,
+                                    (fy + ry * 70.0f) / 130.0f,
+                                    kWorldSeed + 31u, 3);
+            band[i] = beds * 0.7f + depthGrad * 0.3f;
             temperature[i] = cold;
             moisture[i] = climateMoisture(worldX, static_cast<int>(i) * kStep);
         }
@@ -412,12 +375,16 @@ static float readSample(const std::vector<float>& samples, int y) {
 Mat layerMaterial(const Land& land, int depth, float band, float temp, float moist) {
     if (depth <= land.soilRows) return land.topMat;
     if (depth <= land.soilRows + land.dirtRows) return Mat::PackedDirt;
-    if (band > 0.72f) return Mat::Basalt;
-    if (band < 0.22f) {
-        if (moist > 0.68f && temp > 0.35f) return Mat::Clay;
-        return Mat::Limestone;
+    // Thin beds of other rock in the stone. The band value is a sawtooth that
+    // runs from 0 to 1 through each bed, so the seams are a few rows wide
+    // and the beds themselves are tens of rows deep.
+    if (band > 0.90f) return Mat::Basalt;                       // dark seams
+    if (band < 0.20f) {
+        if (moist > 0.60f && temp > 0.30f) return Mat::Clay;    // wet beds
+        return Mat::Limestone;                                  // pale beds
     }
-    if (moist < 0.34f && temp > 0.58f && band > 0.45f && band < 0.55f) return Mat::Sand;
+    if (band > 0.62f && band < 0.66f && moist < 0.42f && temp > 0.45f) return Mat::Sand;
+    if (band > 0.74f && band < 0.77f) return Mat::Gravel;
     return Mat::Stone;
 }
 
@@ -444,47 +411,6 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
 // so a cavern is the same distance under the ground everywhere. A flat layer
 // instead would come close to the surface under a hill and sink out of reach
 // under a valley.
-float caveField(int worldX, int y, int surface) {
-    const float depth = static_cast<float>(y - surface);
-    const float fx = static_cast<float>(worldX);
-
-    // The third axis: a slow drift along the world. This is the slice of the
-    // cave volume we are looking at. Because the slice moves as you travel,
-    // the tunnels are not an extrusion of one flat pattern - they breathe.
-    const float slice = fbm1(fx / 1500.0f, kWorldSeed + 71u, 2) * 5.0f;
-
-    // The warp. The cave is read at a point that another noise has pushed
-    // about, so it winds and curls instead of running in round blobs. This is
-    // what joins one cavern to the next.
-    //
-    // One octave, and a gentle push. A hard warp folds the field back on
-    // itself, and a field folded back on itself has a lot of small islands
-    // near the threshold - which is exactly the swiss cheese that was there
-    // before. The connecting comes from the drifting slice instead: it moves
-    // the whole cavern sideways as you travel, so passages that would have
-    // run side by side forever meet and join.
-    const float wx = (noise3(fx / 380.0f, depth / 340.0f, slice / 320.0f, kWorldSeed + 43u) - 0.5f) * kCaveWarp;
-    const float wy = (noise3(fx / 360.0f, depth / 320.0f, slice / 300.0f, kWorldSeed + 47u) - 0.5f) * kCaveWarp;
-    const float wz = (noise3(fx / 340.0f, depth / 300.0f, slice / 280.0f, kWorldSeed + 49u) - 0.5f) * kCaveWarp;
-
-    // The cave itself: slow, wide noise, so a cavern is a cavern.
-    return fbm3((fx + wx) / kCaveWidth,
-                (depth + wy) / kCaveHeight,
-                (slice + wz) / kCaveSlice,
-                kWorldSeed + 41u, kCaveOctaves);
-}
-
-// How much noise a cell needs before it counts as cave. The bar drops as the
-// rock goes deeper, so the caves grow as they go down, and it rises again in
-// the deepest rock, which is the solid floor the world stands on.
-float caveThreshold(int worldX, int y, int surface) {
-    (void)worldX;
-    const float depth = static_cast<float>(y - surface);
-    const float belt = std::min(1.0f, std::max(0.0f, (depth - 60.0f) / 400.0f));
-    const float basement = std::min(1.0f, std::max(0.0f, (depth - 900.0f) / 700.0f));
-    return kCaveThreshold - kCaveDepthBias * belt + kCaveBasement * basement;
-}
-
 // -- Drawing the hand-made patterns ----------------------------------------
 
 // Puts one hand-made pattern into a chunk, standing on the ground at `baseX`
@@ -764,27 +690,54 @@ float mountainHeightAt(int worldX) {
 // running water goes. The ground is cut down along them, and the deeper the
 // line cuts the wider the valley it leaves behind, which is what a valley cut
 // by a stream looks like.
+// One wave, centred on zero, so it can raise or lower the ground.
+static float shapeWave(float x, float wavelength, uint32_t seed, int octaves) {
+    return (fbm1(x / wavelength, seed, octaves) - 0.5f) * 2.0f;
+}
+
 static float profileHeight(int worldX) {
     const float x = static_cast<float>(worldX);
 
     // The great swell: the whole world rising and falling over thousands of
     // columns, so the land is never the same height two valleys apart.
-    const float swell = fbm1(x / 3200.0f, kWorldSeed + 5u, 2) * 2.0f - 1.0f;
+    const float swell = shapeWave(x, 5200.0f, kWorldSeed + 5u, 2);
 
     // Broad rolling hills on top of that.
-    const float hills = fbm1(x / 700.0f, kWorldSeed + 11u, 3) * 2.0f - 1.0f;
+    const float hills = shapeWave(x, 900.0f, kWorldSeed + 11u, 3);
+    const float hills2 = shapeWave(x, 260.0f, kWorldSeed + 12u, 2);
+
+    // Bumps and hollows a few dozen columns across. These are what keep the
+    // ground from settling into long flat terraces: a land whose only shapes
+    // are a kilometre wide is a staircase of identical steps, because every
+    // step of one row is followed by a hundred columns of nothing.
+    const float rough = shapeWave(x, 90.0f, kWorldSeed + 13u, 2);
+    const float fine = shapeWave(x, 30.0f, kWorldSeed + 17u, 2);
 
     const float mountain = mountainHeightAt(worldX);
 
-    // The channels the rain cut.
-    const float flow = noise1(x / 620.0f, kWorldSeed + 67u);
-    const float fold = 1.0f - std::fabs(2.0f * flow - 1.0f);
-    const float channel = std::max(0.0f, fold - 0.88f) / 0.12f;
-    const float eroded = channel * channel * 30.0f *
+    // Crags: the short, jagged detail that only the mountains have. On the
+    // lowlands this is zero, because a plain with a sawtooth on it is not a
+    // mountain, it is a sawtooth.
+    const float crags = shapeWave(x, 170.0f, kWorldSeed + 19u, 2) * mountain;
+
+    // The channels the rain cut. The folded noise is high along a winding
+    // line, and that line is where the water runs, so the ground is cut down
+    // along it and the cut is widest where the fold is strongest.
+    const float crestLine = ridged1(x / 520.0f, kWorldSeed + 67u, 2);
+    const float channel = std::max(0.0f, crestLine - 0.62f) / 0.38f;
+    const float eroded = channel * channel * 26.0f *
                          fbm1(x / 1600.0f, kWorldSeed + 68u, 2);
 
     // Lowland level. Everything else is measured up from here.
-    return 330.0f - swell * 30.0f - hills * 26.0f - mountain * 150.0f + eroded;
+    return 330.0f
+         - swell * 190.0f
+         - hills * 130.0f
+         - hills2 * 56.0f
+         - rough * 38.0f
+         - fine * 13.0f
+         - mountain * 260.0f
+         - crags * 56.0f
+         + eroded;
 }
 
 // The height of the ground at a column, remembered.
@@ -977,37 +930,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
-    // 2. Caves, hollowed out of the rock.
-    //
-    //    The field is read every few rows and filled in between, because it is
-    //    smooth over hundreds of rows: the shape is the same as reading it
-    //    cell by cell, at a quarter of the cost.
-    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
-        const int worldX = baseX + lx;
-        const int surface = groundRow(worldX);
-        const int bottom = height - 3;
-
-        int y = surface + kCaveRoof;
-        float previous = caveField(worldX, y, surface);
-        while (y < bottom) {
-            const int nextY = std::min(y + kCaveStep, bottom);
-            const float next = caveField(worldX, nextY, surface);
-            for (int row = y; row < nextY; ++row) {
-                // Smoothed between the two samples, so the wall of the cavern
-                // does not come out in steps.
-                const float t = static_cast<float>(row - y) / static_cast<float>(nextY - y);
-                const float s = t * t * (3.0f - 2.0f * t);
-                const float field = previous + (next - previous) * s;
-                if (field <= caveThreshold(worldX, row, surface)) continue;
-                const size_t cell = chunk.index(lx, row);
-                chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
-                chunk.mass[cell] = 0.0f;
-            }
-            previous = next;
-            y = nextY;
-        }
-    }
-
     // 3. Pockets of loose material buried in the ground: sand, gravel, clay.
     //    They are big - a pocket you can dig a hole in - and their outline is
     //    lumpy, the way a pocket of loose sand in the rock is. A smooth oval
@@ -1052,87 +974,82 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
-    // 4. A pond on the surface, where the ground is flat enough to hold one.
+    // 4. A pond on the surface, filling a natural basin.
     //
-    //    The pond is a bowl dug into the ground, and the bowl is round: the
-    //    floor dips away in the middle and comes back up at the shore, so the
-    //    water is deep in the middle and tapers away to nothing at both ends.
-    //    A pond dug as a rectangle - a flat floor, a straight wall at each end
-    //    - is the most machine-made thing in the world, and it was.
-    //
-    //    The water in it is level from end to end, because water is level. The
-    //    bed under it is rock, because the ground down there might be hollow -
-    //    a cave under the pond would swallow the water whole.
-    //
-    //    It only appears where the ground is flat across the whole span. A
-    //    bowl dug into a slope comes out as a stepped pit, and the water ends
-    //    up pooled in the deepest step with the shallow ones left dry.
+    //    Water is level, so the water surface sits at the height of the
+    //    lowest rim of the basin. The basin is found the way a real lake is
+    //    found: a low point in the ground with higher ground on both sides.
+    //    Every cell of ground below that level is filled, and a sandy shore
+    //    is left where the water meets the land.
     int pondLeft = 0;
     int pondRight = -1;
     {
-        const int lx = 24 + static_cast<int>(hash01(index, 0, 101) * (Chunk::WIDTH - 48.0f));
-        const int half = 11 + static_cast<int>(hash01(index, 0, 102) * 11.0f);
-        const int spanLeft = lx - half;
-        const int spanRight = lx + half;
-
-        // How much the ground moves up and down across the pond and its rims.
-        int lowest = 0;
-        int highest = 1 << 30;
-        for (int l = spanLeft - 1; l <= spanRight + 1; ++l) {
-            const int g = groundRow(baseX + l);
-            lowest = std::max(lowest, g);
-            highest = std::min(highest, g);
+        // Find the deepest natural basin in this chunk.
+        int bestLowX = -1;
+        int bestDepth = 0;
+        for (int cx = 12; cx < Chunk::WIDTH - 12; ++cx) {
+            const int half = 22;
+            const int spanLeft = std::max(0, cx - half);
+            const int spanRight = std::min(Chunk::WIDTH - 1, cx + half);
+            int lowX = spanLeft;
+            for (int l = spanLeft + 1; l <= spanRight; ++l)
+                if (groundRow(baseX + l) > groundRow(baseX + lowX)) lowX = l;
+            int rimLeft = groundRow(baseX + spanLeft);
+            int rimRight = groundRow(baseX + spanRight);
+            for (int l = lowX - 1; l >= spanLeft; --l) rimLeft = std::min(rimLeft, groundRow(baseX + l));
+            for (int l = lowX + 1; l <= spanRight; ++l) rimRight = std::min(rimRight, groundRow(baseX + l));
+            const int spill = std::max(rimLeft, rimRight);
+            const int bottom = groundRow(baseX + lowX);
+            const int depth = bottom - spill;
+            if (depth > bestDepth) { bestDepth = depth; bestLowX = lowX; }
         }
 
-        if (lowest - highest <= 3) {
-            // The water's surface, and how deep the bowl goes under it.
-            //
-            // The surface has to be below the lowest ground in the span, or
-            // the water would find a way out over it. The ground is allowed
-            // to move three rows, so the water sits at least four rows down.
-            const int base = groundRow(baseX + lx);
-            const int waterDepth = 4 + static_cast<int>(hash01(index, 0, 103) * 3.0f);
-            const int bowlDepth = 3 + static_cast<int>(hash01(index, 0, 104) * 6.0f);
-            const int bedRows = 3;
-            const int surface = base + waterDepth;
+        if (bestLowX >= 0 && bestDepth >= 4) {
+            const int lx = bestLowX;
+            const int half = 22;
+            const int spanLeft = std::max(0, lx - half);
+            const int spanRight = std::min(Chunk::WIDTH - 1, lx + half);
+            int rimLeft = groundRow(baseX + spanLeft);
+            int rimRight = groundRow(baseX + spanRight);
+            for (int l = lx - 1; l >= spanLeft; --l) rimLeft = std::min(rimLeft, groundRow(baseX + l));
+            for (int l = lx + 1; l <= spanRight; ++l) rimRight = std::min(rimRight, groundRow(baseX + l));
+            const int spill = std::max(rimLeft, rimRight);
+            const int waterTop = spill;
+            const Mat shoreMat = (climateTemperature(baseX + lx) > 0.5f) ? Mat::Sand : Mat::Clay;
 
             for (int l = spanLeft; l <= spanRight; ++l) {
-                const float t = static_cast<float>(l - lx) / static_cast<float>(half);
-
-                // The shape of the bowl: deepest in the middle, up at the shore.
-                float shape = 1.0f - t * t;
-                if (shape < 0.0f) shape = 0.0f;
-                shape = std::pow(shape, 0.6f);
-
-                // The shore is not a smooth curve either.
-                const float wobble = (noise1(static_cast<float>(baseX + l) / 9.0f,
-                                             kWorldSeed + 71u) - 0.5f) * 1.8f;
-
-                const int floor = surface + static_cast<int>(std::lround(bowlDepth * shape + wobble));
-                if (floor <= surface) continue;   // this end of the pond is dry
-
-                // Dig the bowl out, but never above the water's level: the
-                // ground between the shore and the water stays as it was.
                 const int g = groundRow(baseX + l);
-                const int digFrom = std::max(g, surface);
+                if (g < waterTop) continue;
+                const float t = static_cast<float>(l - lx) / static_cast<float>(half);
+                const int extra = static_cast<int>((1.0f - t * t) * 5.0f);
+                const int floor = g + extra;
+                const int digFrom = std::max(g, waterTop);
                 for (int y = digFrom; y < floor; ++y) {
                     if (y < 0 || y >= height) continue;
                     const size_t cell = chunk.index(l, y);
                     chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
                     chunk.mass[cell] = 0.0f;
                 }
-                // Fill it.
-                for (int y = surface; y < floor; ++y) {
+                for (int y = waterTop; y < floor; ++y) {
                     if (y < 0 || y >= height) continue;
                     const size_t cell = chunk.index(l, y);
                     chunk.cells[cell] = static_cast<uint8_t>(Mat::Water);
                     chunk.mass[cell] = 1.0f;
                 }
-                // The bed of the basin, so the pond has a bottom to stand on.
-                for (int y = floor; y < floor + bedRows; ++y) {
+                for (int y = floor; y < floor + 3; ++y) {
                     if (y < 0 || y >= height) continue;
                     const size_t cell = chunk.index(l, y);
                     chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
+                    chunk.mass[cell] = 0.0f;
+                }
+            }
+            // Shoreline sediment.
+            for (int l = spanLeft; l <= spanRight; ++l) {
+                const int g = groundRow(baseX + l);
+                if (g < waterTop) continue;
+                for (int y = g; y < std::min(g + 2, height - 3); ++y) {
+                    const size_t cell = chunk.index(l, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(shoreMat);
                     chunk.mass[cell] = 0.0f;
                 }
             }

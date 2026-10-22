@@ -11,17 +11,19 @@
 enum class Mat : uint8_t {
     Air = 0,
 
-    // Solids — stay where they are, do not fall.
+    // Solids — stay where they are, do not fall. Soil and packed dirt are here
+    // because they are the ground: a hillside made of loose grains would
+    // slump into a pancake on its own, which is not what ground does.
     Bedrock,
     Stone,
     Limestone,
     Basalt,
     Obsidian,
     Bones,
-
-    // Loose solids — fall when unsupported and pile up.
     Soil,
     PackedDirt,
+
+    // Loose solids — fall when unsupported and pile up.
     Sand,
     Gravel,
     Clay,
@@ -40,6 +42,10 @@ enum class Mat : uint8_t {
     Lava,
     Oil,
     Acid,
+
+    // Softened ground — what dirt turns into when it gets wet. It stays exactly
+    // where it is: wet earth holds its shape, it does not run away. This is
+    // what stops a pond from quietly eating the ground it sits on.
     Mud,
 
     // Gases — rise, spread and dissipate (inverted liquids).

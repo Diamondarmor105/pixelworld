@@ -48,6 +48,9 @@ Direction from the learner (they explicitly want this, so it shapes the build):
 - The world is a 2D pixel grid, endless horizontally, generated in chunks ahead of the player as they move (`scope.md > POC Boundary`).
 - Terrain has a surface layer: packed dirt topped with foliage, trees and foliage of varied shapes, sometimes giant trees, and scattered surface ponds of water.
 - Below the surface: hills and mountains at the surface, caves carved underneath, with clay, sand, and gravel pockets filling cave ceilings and floors, water pools, and hidden oil pockets deeper down.
+- **The land is large.** A great swell raises and lowers the whole world over thousands of columns, broad rolling hills sit on top of that, and mountain ranges stand above both, with wide plains between them. Over 40 chunks the ground moves about 200 rows from the bottom of a valley to the top of a peak.
+- **Snow lies on the mountain tops and nowhere else.** How much snow a column carries is decided by how high that column's mountain is — nothing in the lowlands, a dusting part way up, up to five rows on the highest ground. A fixed snow line across the map would put snow on flat lowland ground and leave bare peaks, so the snow follows the mountain itself.
+- **The caves are deep, rare and joined up.** Nothing within 30 rows of the surface is hollowed out, so the roof over a cave is solid ground and a pond on the surface has rock under it. The caves are large caverns that wind and run into each other rather than small scattered pockets, and they hollow out about 9% of the rock.
 - Each chunk includes hand-authored structures placed by generation — ruins (wood and stone), trees, and smaller foliage — **each with several variations** so the world doesn't feel repetitive.
 - **Simulation is limited to on-screen pixels.** Off-screen terrain is generated and held frozen until it comes into view. This is what makes an endless world affordable.
 - The player cannot fall out of the bottom of the world.
@@ -59,8 +62,9 @@ Materials are defined by behavior categories, not individually hand-coded:
 | Category | Materials | Behavior |
 | --- | --- | --- |
 | Solids | Stone, Bedrock, Limestone, Basalt Columns, Obsidian, Bones | Stay in place; resist explosions (harder than dirt); do not fall. |
-| Loose solids | Soil, Packed Dirt, Sand, Gravel, Clay, Snow | Fall when unsupported and pile up with a natural slope. |
-| Liquids | Water, Lava, Oil, Acid, Mud | Flow, spread, and pool in cavities according to weight. |
+| Ground solids | Soil, Packed Dirt, Mud | Stay in place. The ground has to hold: a hillside made of loose grains slumps into a flat pancake, and a hill that runs away takes the trees and the ruins with it. Mud is wet ground — it holds its shape and melts back into water next to lava. |
+| Loose solids | Sand, Gravel, Clay, Snow | Fall when unsupported and pile up with a natural slope. |
+| Liquids | Water, Lava, Oil, Acid | Flow, spread, and pool in cavities according to weight. |
 | Flammable organics | Wood, Bark, Foliage, Mycelium, Fungal Cap | Catch fire, burn, spread fire to neighbors, and turn to Ash. |
 | Meltable | Snow, Glacial Ice, Mud, Clay | Turn to Water when lava or fire is adjacent (no temperature tracking). |
 | Byproduct | Ash | Light and crumbly; washes away in water. |
@@ -72,7 +76,7 @@ Materials are defined by behavior categories, not individually hand-coded:
 - Lava or Fire + Wood / Bark / Foliage / Mycelium / Fungal Cap → Fire spreading, then Ash.
 - Lava or Fire + Oil → ignites fiercely and sets adjacent flammables alight.
 - Lava + Sulfur Crust → sudden ignition and a small explosion, carving a crater.
-- Water + Soil or Packed Dirt → Mud (softens, then flows).
+- Water + Soil or Packed Dirt → Mud (softens and holds its shape; one wet layer, no more).
 - Water + Ash → dissolves and clears the ash.
 
 There is **no temperature system**: reactions are triggered by what is adjacent, not by tracked heat. Nothing cools down.
@@ -106,6 +110,11 @@ Number keys select, mouse aims, click uses (`scope.md > POC Boundary`).
 - [ ] Fire lit on wood or foliage spreads to adjacent flammable pixels without further clicks, and burned-out areas are left as Ash.
 - [ ] Sand and gravel dropped or unsupported fall and form sloped piles rather than floating or forming flat towers.
 - [ ] Liquids flow downward and sideways and pool in cavities instead of passing through solid material.
+- [ ] A liquid keeps its amount: water does not eat the ground it lies on, and the hillside does not wash away into a pond that then drains into the sea.
+- [ ] The ground stands up: a hill, a cliff and a cave roof hold their shape instead of slumping into a flat plain.
+- [ ] A pond in the ground holds its water, level from end to end, and does not leak into a cave underneath.
+- [ ] Snow lies on the mountain tops and nowhere else: the lowlands are bare, and every snowy column sits on a mountain.
+- [ ] The caves run deep under the ground — solid rock under the surface, so a pond on the surface has a floor — and form large caverns that join up instead of small scattered pockets.
 - [ ] Lava adjacent to water becomes Stone and the water is consumed; when the lava source is large or deep the result is Obsidian instead.
 - [ ] Snow or Glacial Ice adjacent to lava or fire becomes Water.
 - [ ] Water adjacent to Soil or Packed Dirt produces Mud.

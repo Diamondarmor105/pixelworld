@@ -12,8 +12,14 @@ namespace {
 // are, where the caves run, what is buried where.
 constexpr uint32_t kWorldSeed = 0x9E3779B9u;
 
-// The row at and above which the ground is covered in snow: the mountain tops.
-constexpr int kSnowLine = 250;
+// How far below the surface the caves begin. The roof over a cave is solid
+// ground, so a pond on the surface has something to stand on and the hills do
+// not all cave in.
+constexpr int kCaveRoof = 30;
+
+// How much of the noise has to be there before a cell counts as cave. The
+// higher this is, the rarer the caves are.
+constexpr float kCaveThreshold = 0.67f;
 
 // -- Noise -----------------------------------------------------------------
 //
@@ -95,6 +101,28 @@ float fbm2(float x, float y, uint32_t seed, int octaves) {
     return total / norm;
 }
 
+// Ridged noise in one dimension.
+//
+// Ordinary noise makes round humps. Fold it - the same trick as folding a
+// piece of paper - and it makes crests instead: a line that comes to a point
+// at the top and runs down on both sides. That is what a mountain range looks
+// like, so the ranges are built out of this rather than out of plain noise.
+float ridged1(float x, uint32_t seed, int octaves) {
+    float total = 0.0f;
+    float amplitude = 1.0f;
+    float frequency = 1.0f;
+    float norm = 0.0f;
+    for (int i = 0; i < octaves; ++i) {
+        float n = noise1(x * frequency, seed + static_cast<uint32_t>(i) * 7919u);
+        n = 1.0f - std::fabs(2.0f * n - 1.0f);   // fold: the peaks are at the edges
+        total += n * n * amplitude;               // and square them, so the crests are sharp
+        norm += amplitude;
+        amplitude *= 0.5f;
+        frequency *= 2.0f;
+    }
+    return total / norm;
+}
+
 // -- What the ground is made of ---------------------------------------------
 
 // The rock under the surface at a given depth. Soil on top, then packed dirt,
@@ -117,25 +145,56 @@ Mat layerMaterial(int worldX, int y, int surface) {
 //
 // Caves are a property of the world, not of the chunk, so one can run across a
 // chunk boundary without a wall appearing in the seam.
+//
+// They are DEEP: nothing within the top of the ground is hollowed out, so the
+// roof over a cave is thick enough to walk on and a pond on the surface has
+// solid rock under it.
+//
+// They are RARE but LARGE: the noise that carves them is slow, so a cavern is
+// a cavern and not a scattering of pockets, and it is warped before it is read,
+// so it bends and curls and runs into the cavern next to it instead of
+// standing alone in the rock.
 bool isCave(int worldX, int y, int surface) {
-    if (y < surface + 10) return false;   // the surface stays intact
-    const float n = fbm2(static_cast<float>(worldX) / 44.0f, static_cast<float>(y) / 34.0f,
+    const float depth = static_cast<float>(y - surface);
+    if (depth < kCaveRoof) return false;   // the roof stays solid
+
+    const float fx = static_cast<float>(worldX);
+
+    // The warp. The cave is read at a point that another noise has pushed
+    // about, so it winds instead of running in blobs. This is what joins one
+    // cavern to the next.
+    const float warpX = fbm2(fx / 300.0f, depth / 220.0f, kWorldSeed + 43u, 2) - 0.5f;
+    const float warpY = fbm2(fx / 260.0f, depth / 240.0f, kWorldSeed + 47u, 2) - 0.5f;
+
+    // The cave itself: slow noise, so a cavern is a cavern.
+    //
+    // It is read in DEPTH below the surface rather than in absolute rows, so a
+    // cavern is the same distance under the ground everywhere. A flat layer
+    // instead would come close to the surface under a hill and sink out of
+    // reach under a valley.
+    const float n = fbm2((fx + warpX * 220.0f) / 165.0f, (depth + warpY * 220.0f) / 140.0f,
                           kWorldSeed + 41u, 3);
-    return n > 0.655f;
+    return n > kCaveThreshold;
 }
 
 // -- Drawing the hand-made patterns ----------------------------------------
 
 // Puts one hand-made pattern into a chunk, standing on the ground at `baseX`
 // and `baseY` (the bottom-left corner, in world cells).
+//
+// `baseY` is where the pattern's lowest *filled* row goes. A pattern whose last
+// row is empty - a ruined wall whose base has eroded away - is lifted so that
+// the part that still exists is the part touching the dirt.
 void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int baseY) {
     const int height = static_cast<int>(chunk.cells.size() / Chunk::WIDTH);
+    const int lowestFilled = structureLowestFilledRow(pattern);
+    if (lowestFilled < 0) return;
 
-    for (int row = 0; row < pattern.rowCount; ++row) {
+    for (int row = 0; row <= lowestFilled; ++row) {
         const char* line = pattern.rows[row];
         // The pattern is written top row first, but it stands on the ground, so
         // its bottom row goes at `baseY` and the rest stack upwards.
-        const int y = baseY - (pattern.rowCount - 1 - row);
+        const int y = baseY - (lowestFilled - row);
         if (y < 0 || y >= height) continue;
 
         for (int column = 0; line[column] != '\0'; ++column) {
@@ -324,21 +383,104 @@ void buildTestFloor(World& world, int floorTop) {
 
 }  // namespace
 
+// -- The shape of the land --------------------------------------------------
+//
+// The land is three things stacked on top of each other:
+//
+//   * a great swell, thousands of columns wide, that makes the whole world
+//     rise and fall;
+//   * broad rolling hills on top of that; and
+//   * mountain ranges standing above both, with snow on their tops.
+//
+// All three are large. The land is meant to look like a landscape you walk
+// through for a long time, not a ripple you step over.
+
+// How many columns the mountain height is averaged over. The raw height curve
+// has sharp kinks where the noise folds, and a seven-row cliff in the ground
+// every few hundred columns is neither a hill nor a mountain - it is a wall,
+// and the snow on top of it slides off. Averaging takes the kink out and
+// leaves a slope.
+constexpr int kMountainSmoothing = 7;
+
+// The height of the mountain at a column, before it is smoothed.
+static float rawMountainHeightAt(int worldX) {
+    const float x = static_cast<float>(worldX);
+
+    // The crest of the range, folded so that it comes to a point.
+    const float crest = ridged1(x / 1500.0f, kWorldSeed + 23u, 3);
+
+    // Where the ranges are. Most of the world has none: the ranges cross it
+    // now and then, with wide plains between them.
+    const float rangeMask = fbm1(x / 3600.0f, kWorldSeed + 29u, 2);
+
+    // A range has to be both high enough to be a range and in a place where
+    // there is one. The geometric mean of the two keeps the ranges broad
+    // instead of cutting them down to a few lonely peaks.
+    const float crestHeight = std::max(0.0f, (crest - 0.30f) / 0.42f);
+    const float rangeHeight = std::max(0.0f, (rangeMask - 0.40f) / 0.36f);
+    return std::min(1.0f, std::sqrt(crestHeight * rangeHeight));
+}
+
+// How high the mountain is at this column: 0 in the lowlands, 1 at the very top
+// of a range.
+float mountainHeightAt(int worldX) {
+    float total = 0.0f;
+    for (int d = -kMountainSmoothing; d <= kMountainSmoothing; ++d) {
+        total += rawMountainHeightAt(worldX + d);
+    }
+    return total / static_cast<float>(2 * kMountainSmoothing + 1);
+}
+
+// The land at one column: where the ground starts, and how much snow lies on
+// top of it.
+struct Land {
+    int surface;    // the first solid row
+    int snowRows;   // how many rows of snow sit on it
+};
+
+static Land landAt(int worldX) {
+    const float x = static_cast<float>(worldX);
+
+    // The great swell: the whole world rising and falling over thousands of
+    // columns, so the land is never the same height two valleys apart.
+    const float swell = fbm1(x / 3200.0f, kWorldSeed + 5u, 2) * 2.0f - 1.0f;
+
+    // Broad rolling hills on top of that.
+    const float hills = fbm1(x / 700.0f, kWorldSeed + 11u, 3) * 2.0f - 1.0f;
+
+    const float mountain = mountainHeightAt(worldX);
+
+    // Lowland level. Everything else is measured up from here.
+    const float surface = 330.0f - swell * 30.0f - hills * 26.0f - mountain * 150.0f;
+
+    Land land;
+    land.surface = static_cast<int>(std::lround(surface));
+
+    // Snow belongs to the mountain tops and to nothing else.
+    //
+    // It is decided by the mountain itself, not by a line drawn across the
+    // map. A fixed line puts snow on a hill in the lowlands whenever the
+    // ground happens to reach it, and leaves a bare peak whenever the hills
+    // happen to be high there - which is exactly how snow ended up all over
+    // the surface instead of up on the mountains.
+    const float m = mountain;
+    if (m > 0.90f) land.snowRows = 5;
+    else if (m > 0.80f) land.snowRows = 4;
+    else if (m > 0.68f) land.snowRows = 3;
+    else if (m > 0.55f) land.snowRows = 2;
+    else if (m > 0.42f) land.snowRows = 1;
+    else land.snowRows = 0;
+    return land;
+}
+
 // -- The endless world ------------------------------------------------------
 
 int groundRow(int worldX) {
-    const float x = static_cast<float>(worldX);
+    return landAt(worldX).surface;
+}
 
-    // Rolling hills, up and down by twenty rows or so.
-    const float hills = fbm1(x / 210.0f, kWorldSeed + 11u, 3) * 2.0f - 1.0f;
-
-    // Big slow mountains: a wave that comes and goes, so every stretch of the
-    // world has high ground somewhere in it.
-    const float ridge = std::max(0.0f, std::sin(x * 0.0035f + 1.1f));
-    const float peaks = ridge * (0.55f + 0.45f * fbm1(x / 430.0f, kWorldSeed + 23u, 2));
-
-    const float y = 300.0f - hills * 20.0f - peaks * 58.0f;
-    return static_cast<int>(std::lround(y));
+int snowRowsAt(int worldX) {
+    return landAt(worldX).snowRows;
 }
 
 void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* placements) {
@@ -347,17 +489,19 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     if (height <= 0) return;
 
     // 1. The ground: a surface that follows the height curve, layered soil,
-    //    dirt and rock underneath, snow on the high peaks, bedrock on the floor.
+    //    dirt and rock underneath, snow on the mountain tops, bedrock on the
+    //    floor.
     for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
         const int worldX = baseX + lx;
-        const int surface = groundRow(worldX);
+        const Land land = landAt(worldX);
+        const int surface = land.surface;
         for (int y = 0; y < height; ++y) {
             Mat m = Mat::Air;
             if (y >= surface) {
                 if (y >= height - 3) {
                     m = Mat::Bedrock;                    // the floor of the world
-                } else if (surface <= kSnowLine && y < surface + 3) {
-                    m = Mat::Snow;                       // snow on the peaks
+                } else if (y < surface + land.snowRows) {
+                    m = Mat::Snow;                       // snow on the mountain tops
                 } else {
                     m = layerMaterial(worldX, y, surface);
                 }
@@ -373,7 +517,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
         const int worldX = baseX + lx;
         const int surface = groundRow(worldX);
-        for (int y = surface + 10; y < height - 3; ++y) {
+        for (int y = surface + kCaveRoof; y < height - 3; ++y) {
             if (!isCave(worldX, y, surface)) continue;
             const size_t cell = chunk.index(lx, y);
             chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
@@ -382,15 +526,16 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     }
 
     // 3. Pockets of loose material buried in the ground: sand, gravel, clay.
+    //    They are big - a pocket you can dig a hole in.
     static const Mat kPocketMaterials[3] = {Mat::Sand, Mat::Gravel, Mat::Clay};
     for (int i = 0; i < 4; ++i) {
         const int kind = static_cast<int>(hash01(index, i, 91) * 3.0f) % 3;
         const Mat m = kPocketMaterials[kind];
         const int lx = 10 + static_cast<int>(hash01(index, i, 92) * (Chunk::WIDTH - 20.0f));
-        const int halfWidth = 3 + static_cast<int>(hash01(index, i, 93) * 6.0f);
-        const int halfHeight = 2 + static_cast<int>(hash01(index, i, 94) * 4.0f);
-        const int centreY = groundRow(baseX + lx) + 22 +
-                            static_cast<int>(hash01(index, i, 95) * 45.0f);
+        const int halfWidth = 6 + static_cast<int>(hash01(index, i, 93) * 9.0f);
+        const int halfHeight = 4 + static_cast<int>(hash01(index, i, 94) * 6.0f);
+        const int centreY = groundRow(baseX + lx) + 34 +
+                            static_cast<int>(hash01(index, i, 95) * 60.0f);
         for (int dy = -halfHeight; dy <= halfHeight; ++dy) {
             for (int dx = -halfWidth; dx <= halfWidth; ++dx) {
                 const float nx = static_cast<float>(dx) / static_cast<float>(halfWidth);
@@ -413,26 +558,32 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     //    rock at each side to stop it wandering off down the hill, and a
     //    stone floor underneath, because the ground down there might be hollow
     //    - a cave under the pond would swallow the water whole.
+    //
+    //    It only appears where the ground is flat across the whole span. A
+    //    bowl dug into a slope comes out as a stepped pit, and the water ends
+    //    up pooled in the deepest step with the shallow ones left dry.
     int pondLeft = 0;
     int pondRight = -1;
     {
         const int lx = 24 + static_cast<int>(hash01(index, 0, 101) * (Chunk::WIDTH - 48.0f));
-        const int worldX = baseX + lx;
-        const int surface = groundRow(worldX);
-        const int left = groundRow(worldX - 12);
-        const int right = groundRow(worldX + 12);
-        if (std::abs(left - surface) <= 5 && std::abs(right - surface) <= 5) {
-            const int half = 6 + static_cast<int>(hash01(index, 0, 102) * 6.0f);
-            const int spanLeft = lx - half;
-            const int spanRight = lx + half;
+        const int half = 10 + static_cast<int>(hash01(index, 0, 102) * 9.0f);
+        const int spanLeft = lx - half;
+        const int spanRight = lx + half;
 
-            // The floor of the bowl: below the lowest rim of the whole span.
-            int floorRow = 0;
-            for (int l = spanLeft; l <= spanRight; ++l) {
-                floorRow = std::max(floorRow, groundRow(baseX + l));
-            }
-            floorRow += 2;
-            const int waterDepth = 3;
+        // How much the ground moves up and down across the pond and its rims.
+        int lowest = 0;
+        int highest = 1 << 30;
+        for (int l = spanLeft - 1; l <= spanRight + 1; ++l) {
+            const int g = groundRow(baseX + l);
+            lowest = std::max(lowest, g);
+            highest = std::min(highest, g);
+        }
+
+        if (lowest - highest <= 3) {
+            // The floor of the bowl: one row under the lowest rim of the whole
+            // span, so the pond is a shallow dip rather than a hole.
+            const int floorRow = lowest + 1;
+            const int waterDepth = 4;
             const int floorThickness = 3;
 
             // Dig the bowl out.
@@ -487,11 +638,14 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     //    sulfur.
     {
         const int lx = 30 + static_cast<int>(hash01(index, 0, 111) * (Chunk::WIDTH - 60.0f));
-        const int top = groundRow(baseX + lx) + 70 +
-                        static_cast<int>(hash01(index, 0, 112) * 40.0f);
-        const int half = 5 + static_cast<int>(hash01(index, 0, 113) * 5.0f);
-        const int cupHeight = 13;
-        const int lavaHeight = 5;
+        const int half = 8 + static_cast<int>(hash01(index, 0, 113) * 7.0f);
+        const int cupHeight = 17;
+        const int lavaHeight = 8;
+        // Deep down, but never so deep that the cup runs into the floor of the
+        // world.
+        const int top = std::min(groundRow(baseX + lx) + 80 +
+                                     static_cast<int>(hash01(index, 0, 112) * 50.0f),
+                                 height - cupHeight - 8);
 
         // The cup: walls at each side and a floor at the bottom. The inside
         // above the lava is hollow air.
@@ -561,8 +715,9 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
         if (clashes) continue;
 
-        // The structure stands on the ground: its bottom row sits on the
-        // lowest ground underneath it, so it is never left hanging in the air.
+        // The structure stands on the ground: its foot goes on the lowest
+        // ground underneath it, so it is never left hanging in the air, and
+        // the row above that, so it is not buried in the dirt either.
         int base = 0;
         for (int dx = 0; dx < patternWidth; ++dx) {
             base = std::max(base, groundRow(baseX + lx + dx));
@@ -570,13 +725,13 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         base = std::min(base, height - patternHeight - 1);
         if (base < patternHeight) continue;
 
-        drawPattern(chunk, pattern, lx, base);
+        drawPattern(chunk, pattern, lx, base - 1);
         footprints.push_back({lx, lx + patternWidth - 1});
 
         if (placements) {
             StructurePlacement placement;
             placement.x = baseX + lx;
-            placement.y = base;
+            placement.y = base - 1;
             placement.width = patternWidth;
             placement.height = patternHeight;
             placement.kind = kind;

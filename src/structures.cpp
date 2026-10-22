@@ -412,6 +412,16 @@ int structurePatternWidth(const StructurePattern& pattern) {
     return width;
 }
 
+int structureLowestFilledRow(const StructurePattern& pattern) {
+    for (int row = pattern.rowCount - 1; row >= 0; --row) {
+        const char* line = pattern.rows[row];
+        for (int column = 0; line[column] != '\0'; ++column) {
+            if (structureMaterial(line[column]) != Mat::Air) return row;
+        }
+    }
+    return -1;
+}
+
 Mat structureMaterial(char c) {
     switch (c) {
         case 'T': return Mat::Wood;

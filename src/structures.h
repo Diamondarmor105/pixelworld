@@ -41,6 +41,14 @@ const StructurePattern& structurePattern(int kind, int variant);
 // How wide a pattern is, in cells.
 int structurePatternWidth(const StructurePattern& pattern);
 
+// The lowest row of a pattern that has anything in it.
+//
+// A pattern whose last row is empty - a ruined wall whose base has eroded away
+// - would otherwise stand one row off the ground, hovering on nothing. This
+// finds the row that actually touches the dirt, so the pattern can be lined up
+// on that one instead.
+int structureLowestFilledRow(const StructurePattern& pattern);
+
 // What one character of a pattern means. '.' and anything unknown mean
 // "nothing here".
 Mat structureMaterial(char c);

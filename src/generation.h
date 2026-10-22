@@ -51,6 +51,15 @@ void generateChunksAround(World& world, int worldX, int radius);
 // they meet.
 int groundRow(int worldX);
 
+// How much snow lies on this column: none at all in the lowlands, a cap on the
+// mountain tops. Snow follows the mountain, not a line drawn across the map,
+// so it only ever appears where there is a mountain to put it on.
+int snowRowsAt(int worldX);
+
+// How high the mountain is at this column, from 0 in the lowlands to 1 at the
+// very top of a range.
+float mountainHeightAt(int worldX);
+
 // -- The hand-made test scenes ----------------------------------------------
 
 // The scene shown when the program runs: sky, layered ground, a sand column, a

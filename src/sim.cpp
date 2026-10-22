@@ -203,12 +203,21 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame,
 
     // Water softens soil and packed dirt into mud, and washes loose ash away.
     // The water itself is not used up, so a pond never drains into its own bed.
+    //
+    // Mud holds its shape. That matters more than it sounds: if wet earth were
+    // allowed to run away like a liquid, the layer of mud would flow out of
+    // the pond, the water would follow it down into the fresh dirt underneath,
+    // that dirt would turn to mud and run away too, and the whole hillside
+    // would be washed into the sea. One wet layer, and no more.
     if (a == Mat::Water || b == Mat::Water) {
         const int sx = (a == Mat::Water) ? nx : x;
         const int sy = (a == Mat::Water) ? ny : y;
         const Mat ground = world.at(sx, sy);
         if (ground == Mat::Soil || ground == Mat::PackedDirt) {
-            world.set(sx, sy, Mat::Mud);
+            // The soil keeps its amount; it is only the material that changes.
+            const float amount = world.mass(sx, sy);
+            if (amount > 0.0f) world.setMass(sx, sy, Mat::Mud, amount);
+            else world.set(sx, sy, Mat::Mud);
         } else if (materialInfo(ground).washedByWater) {
             world.set(sx, sy, Mat::Air);
         }
@@ -325,14 +334,32 @@ int surfaceRow(const World& world, int x, int from) {
 //     It gates the sideways and diagonal steps only; straight-down falling is
 //     always allowed, so a solid still drops freely through open air.
 //
+// Can a cell that holds `there` take material of kind `incoming`?
+//
+// A cell holds one kind of material and only ever one kind. Air takes
+// anything and becomes it. A cell already holding the same kind takes more of
+// the same and stays that kind. A cell holding anything else refuses.
+//
+// This is the rule that keeps water water. Pouring water over mud used to
+// turn the water into mud as it spread, because the receiving cell decided
+// what it wanted to be rather than what was being poured into it: a pool of
+// water touching a bed of soil lost its own mass a little at a time and the
+// ground turned to mud and drained away. Materials move; they do not change
+// what they are.
+bool takesMaterial(Mat there, Mat incoming) {
+    return there == Mat::Air || there == incoming;
+}
+
 // Gives the small amount a cell is holding to a neighbour that can accept it,
 // so a trace of material is never left stranded. Returns true if the cell was
 // emptied. Used for the last sliver of a flow, both when a cell has just spread
 // nearly all of itself away and when it has been too small to spread at all.
 //
 // Diagonals below are tried first, then the sides: a crumb prefers to tumble
-// downhill, and only then to slide sideways. A cell that can take it is any
-// mobile material (masses add) or air (it becomes material).
+// downhill, and only then to slide sideways. A cell that can take it is empty
+// air (it becomes material) or already holds the same material (masses add).
+// A neighbour that is already full is passed over: a cell holds one unit and
+// no more, and a crumb is not worth pushing one over.
 bool handOffCrumb(World& world, int x, int y, Mat self, float amount) {
     if (amount <= 0.0f) return false;
     static const int dx[4] = {-1, +1, -1, +1};
@@ -342,10 +369,10 @@ bool handOffCrumb(World& world, int x, int y, Mat self, float amount) {
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
-        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls;
-        if (there != Mat::Air && !mobileThere) continue;
-        const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
-        world.setMass(nx, ny, mobileThere ? there : self, current + amount);
+        if (!takesMaterial(there, self)) continue;
+        const float current = (there == Mat::Air) ? 0.0f : world.mass(nx, ny);
+        if (current + amount > 1.0f) continue;
+        world.setMass(nx, ny, self, current + amount);
         world.setMass(x, y, self, 0.0f);
         return true;
     }
@@ -370,54 +397,132 @@ void flowMass(World& world, int x, int y, float& budget) {
 
     const float spreadScale = 1.0f - (info.viscosity / 255.0f) * 0.9f;
 
-    // 1. Gravity (or anti-gravity for gases): pour along gDir into a cell with
-    //    room. Applies to any positive mass, including a sliver.
+    // 1. Gravity (or anti-gravity for gases).
+    //
+    //    The two kinds of mobile material move by different rules, because they
+    //    are different things:
+    //
+    //    * A LOOSE SOLID is a heap of grains. It moves as whole cells: it drops
+    //      one row a tick, it sinks through a liquid and pushes that liquid up
+    //      as it goes, and it settles into a slope instead of levelling out.
+    //    * A LIQUID is a body of fluid. It moves by transferring a fraction of a
+    //      unit, so it can be half full and spread out, and a pool levels
+    //      itself.
+    //
+    //    A liquid never changes into a solid by being poured at one, and a
+    //    solid never changes into a liquid by sinking into one. The only place
+    //    two materials exchange places is a solid sinking into a liquid, and
+    //    that is a straight swap: the solid goes down, the liquid comes up, and
+    //    both amounts are carried across unchanged.
     const int gy = y + gDir;
     if (gy >= 0 && gy < world.height()) {
         const Mat along = world.at(x, gy);
-        const bool alongFlows = materialInfo(along).flows;
-        const bool alongFalls = materialInfo(along).falls && (along == self);
-        const bool alongRises = materialInfo(along).rises && (along == self);
-        bool alongTakes = along == Mat::Air || alongFlows || alongFalls || alongRises;
-        if (info.falls && materialInfo(along).flows && self != Mat::PackedDirt) alongTakes = true;
-        if (alongTakes) {
-            const float alongMass = ((info.falls && materialInfo(along).flows) ? 0.0f :
-                                    ((alongFlows || alongFalls || alongRises) ? world.massAt(x, gy) : 0.0f));
-            const float room = 1.0f - alongMass;
-            if (room > 0.0f) {
-                float flow = std::min(myMass, room);
-                if (myMass - flow < kMassEmpty) flow = myMass;
-                if (flow > kFlowMin) {
-                    bool solidIntoLiquid = info.falls && materialInfo(along).flows && self != Mat::PackedDirt;
-                    float liquidMass = solidIntoLiquid ? world.mass(x, gy) : 0.0f;
-                    Mat liquidMat = along;
-                    const Mat into = solidIntoLiquid ? self : ((alongFlows || alongFalls || alongRises) ? along : self);
-                    const float alongNow = solidIntoLiquid ? 0.0f : ((alongFlows || alongFalls || alongRises) ? world.mass(x, gy) : 0.0f);
-                    world.setMass(x, y, self, world.mass(x, y) - flow);
-                    world.setMass(x, gy, into, alongNow + flow);
-                    // Displace liquid upward when solid sinks into it.
-                    if (solidIntoLiquid && liquidMass > 0.0f) {
-                        // Find first air cell above.
-                        for (int yy = gy - 1; yy >= 0; --yy) {
-                            if (world.at(x, yy) == Mat::Air) {
-                                world.setMass(x, yy, liquidMat, liquidMass);
-                                break;
-                            }
-                        }
+        const bool alongIsAir = (along == Mat::Air);
+        const bool alongIsLiquid = materialInfo(along).flows;
+
+        if (info.falls) {
+            // -- A loose solid drops as a whole cell.
+            //
+            // It falls into air. It sinks into a liquid, which is displaced
+            // upwards into the cell the grain just left - that is what makes a
+            // stone dropped in a pond sink instead of floating on it, and it is
+            // a straight swap: the grain goes down, the liquid comes up, and
+            // both amounts are carried across unchanged.
+            //
+            // It does NOT sink into another solid. Sand does not quietly work
+            // its way down through the dirt it was dropped on; it piles up on
+            // top of it, which is what a heap of sand is supposed to do.
+            const bool sinksIntoLiquid = alongIsLiquid && self != Mat::PackedDirt;
+            if (alongIsAir || sinksIntoLiquid) {
+                const float solidMass = world.mass(x, y);
+                if (sinksIntoLiquid) {
+                    const float liquidMass = world.mass(x, gy);
+                    world.setMass(x, gy, self, solidMass);
+                    world.setMass(x, y, along, liquidMass);
+                } else {
+                    world.setMass(x, gy, self, solidMass);
+                    world.setMass(x, y, self, 0.0f);
+                }
+                budget -= solidMass;
+                return;
+            }
+        } else {
+            // -- A liquid (or a gas) pours along gDir into air, or into more of
+            //    itself. It will not pour into a cell holding a different
+            //    material: that would change one material into another.
+            if (alongIsAir || along == self) {
+                // How full the cell below is: the larger of what it held at the
+                // start of the tick and what it holds now, so a cell that has
+                // already been filled this tick is never overfilled.
+                const float alongMass = std::max(world.massAt(x, gy), world.mass(x, gy));
+                const float room = 1.0f - alongMass;
+                if (room > 0.0f) {
+                    float flow = std::min(myMass, room);
+                    // A sliver too small to be a cell of its own goes down whole
+                    // rather than being left behind - but never by more than the
+                    // cell below can hold.
+                    if (myMass - flow < kMassEmpty) flow = std::min(myMass, room);
+                    if (flow > kFlowMin) {
+                        const float alongNow = alongIsAir ? 0.0f : world.mass(x, gy);
+                        world.setMass(x, y, self, world.mass(x, y) - flow);
+                        world.setMass(x, gy, alongIsAir ? self : along, alongNow + flow);
+                        budget -= flow;
+                        return;
                     }
-                    budget -= flow;
-                    return;
                 }
             }
         }
     }
 
-    if (myMass <= kMassEmpty) {
-        handOffCrumb(world, x, y, self, myMass);
+    if (info.falls) {
+        // -- A loose solid spreads by moving WHOLE grains.
+        //
+        // A heap of sand is made of grains, not of fractions of a grain, so a
+        // grain never splits: it either moves to the next cell or it stays
+        // where it is. It only ever moves into empty air.
+        //
+        // Whether it is allowed to slide is decided by the slope. `drop` is how
+        // many rows lower the ground is in the neighbour's column compared with
+        // the ground under this grain. A grain slides diagonally down a slope
+        // of at least `need` rows, and `need` comes from the material's
+        // friction: sand (110) slides on a one row step and forms a dune, gravel
+        // (140) needs two and holds a steeper bank, clay (200) needs three and
+        // stands almost upright. That is the angle of repose.
+        const int mySupport = surfaceRow(world, x, y + 1);
+        const int need = std::max(1, info.friction / 64);
+        // Which side a grain tries first is fixed by its position, so a heap
+        // settles into a shape instead of shuffling back and forth.
+        static const int dx[4] = {-1, +1, -1, +1};
+        static const int dy[4] = {+1, +1, 0, 0};
+        static const int leftFirst[4] = {0, 1, 2, 3};
+        static const int rightFirst[4] = {1, 0, 3, 2};
+        const bool preferLeft = (noise(x, y, 0) & 1u) == 0u;
+        const int* order = preferLeft ? leftFirst : rightFirst;
+        for (int k = 0; k < 4; ++k) {
+            const int i = order[k];
+            const int nx = x + dx[i];
+            const int ny = y + dy[i];
+            if (!world.inBounds(nx, ny)) continue;
+            if (world.at(nx, ny) != Mat::Air) continue;
+            const int theirGround = surfaceRow(world, nx, ny);
+            if (theirGround - mySupport < need) continue;
+            const float solidMass = world.mass(x, y);
+            world.setMass(nx, ny, self, solidMass);
+            world.setMass(x, y, self, 0.0f);
+            budget -= solidMass;
+            return;
+        }
         return;
     }
 
-    // Head: count same-type cells stacked in the gravity direction.
+    if (myMass <= kMassEmpty) {
+        handOffCrumb(world, x, y, self, world.mass(x, y));
+        return;
+    }
+
+    // Head: how deep this cell sits under the liquid above it. This is the
+    // pressure of the column, and it is what makes a pool spread out to its
+    // edges instead of sitting in a hole.
     float head = 0.0f;
     if (!rises) {
         for (int cy = y - 1; cy >= 0; --cy) {
@@ -443,7 +548,8 @@ void flowMass(World& world, int x, int y, float& budget) {
         const int ny = y + dy[i];
         if (!world.inBounds(nx, ny)) continue;
         const Mat there = world.at(nx, ny);
-        if (there != Mat::Air && !materialInfo(there).flows && !materialInfo(there).falls && !materialInfo(there).rises) continue;
+        // A cell only takes material of its own kind, or is empty air.
+        if (!takesMaterial(there, self)) continue;
 
         if (info.falls) {
             const int drop = surfaceRow(world, nx, ny) - surfaceRow(world, x, y);
@@ -459,7 +565,15 @@ void flowMass(World& world, int x, int y, float& budget) {
         const float diff = (myMass + head) - (other + (otherHead > 0.0f ? otherHead : 0.0f));
         const float bar = (diff - (myMass - other)) > kPressureMin ? kPressureMin : kFlowMin;
         if (diff <= kFlowMin * 2.0f) continue;
-        if (diff > bar) offers[i] = diff * kSideShare * spreadScale;
+        if (diff <= bar) continue;
+
+        // A cell holds one unit, no more. A neighbour that is already full is
+        // not offered anything: without this a pool squashes itself into fewer
+        // and ever fuller cells, so a lake in a stone cup sinks to half its
+        // depth instead of staying the depth it was poured at.
+        const float room = 1.0f - std::max(other, world.mass(nx, ny));
+        if (room <= 0.0f) continue;
+        offers[i] = std::min(diff * kSideShare * spreadScale, room);
     }
 
     float totalOffer = 0.0f;
@@ -475,15 +589,25 @@ void flowMass(World& world, int x, int y, float& budget) {
         const int nx = x + dx[i];
         const int ny = y + dy[i];
         const Mat there = world.at(nx, ny);
-        const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
-        const float other = mobileThere ? world.massAt(nx, ny) : 0.0f;
+        if (!takesMaterial(there, self)) continue;
+        const float other = (there == Mat::Air) ? 0.0f : world.massAt(nx, ny);
         if (other + give < kMassEmpty) continue;
-        const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
-        world.setMass(nx, ny, mobileThere ? there : self, current + give);
-        budget -= give;
-        given += give;
+        const float current = (there == Mat::Air) ? 0.0f : world.mass(nx, ny);
+        // The neighbour may have been filled by somebody else earlier in this
+        // same pass, so the room is checked again here, not just when the
+        // offer was worked out.
+        const float room = 1.0f - current;
+        if (room <= 0.0f) continue;
+        const float actual = std::min(give, room);
+        world.setMass(nx, ny, self, current + actual);
+        budget -= actual;
+        given += actual;
     }
 
+    // Whatever is left stays here. If that is a sliver too small to be a real
+    // cell, it is handed to a neighbour that will take it - and if no
+    // neighbour will, the sliver simply stays. It is never multiplied: the
+    // amount that went out is subtracted from what came in, never forgotten.
     float remain = world.mass(x, y) - given;
     if (remain < kMassEmpty && remain > 0.0f) {
         for (int i = 0; i < 4; ++i) {
@@ -491,16 +615,12 @@ void flowMass(World& world, int x, int y, float& budget) {
             const int ny = y + dy[i];
             if (!world.inBounds(nx, ny)) continue;
             const Mat there = world.at(nx, ny);
-            const bool mobileThere = materialInfo(there).flows || materialInfo(there).falls || materialInfo(there).rises;
-            if (there != Mat::Air && !mobileThere) continue;
-            const float current = mobileThere ? world.mass(nx, ny) : 0.0f;
-            world.setMass(nx, ny, mobileThere ? there : self, current + remain);
+            if (!takesMaterial(there, self)) continue;
+            const float current = (there == Mat::Air) ? 0.0f : world.mass(nx, ny);
+            if (current + remain > 1.0f) continue;
+            world.setMass(nx, ny, self, current + remain);
             remain = 0.0f;
             break;
-        }
-        if (remain > 0.0f) {
-            world.setMass(x, y, self, world.mass(x, y));
-            return;
         }
     }
     world.setMass(x, y, self, remain);

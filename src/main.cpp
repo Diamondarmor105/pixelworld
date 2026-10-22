@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <vector>
 
 #include "blast.h"
@@ -970,6 +972,14 @@ bool checkWaterStopsPulsing() {
     for (int x = 0; x < W; ++x) {
         for (int y = 200; y < H; ++y) world.set(x, y, Mat::Stone);
     }
+    // A pool needs walls, or it is only a puddle: water on a flat floor has
+    // nowhere to be but the floor, so it spreads outwards for as long as it is
+    // allowed to. The basin below is exactly full - 400 columns, 14 rows deep,
+    // one unit in every cell - so the water has nowhere to go at all and any
+    // movement at all is the surface flickering.
+    for (int x : {39, 440}) {
+        for (int y = 180; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
     for (int x = 40; x < 440; ++x) {
         for (int y = 186; y < 200; ++y) world.set(x, y, Mat::Water);
     }
@@ -1001,14 +1011,13 @@ bool checkWaterStopsPulsing() {
 
     // The meaningful measure is how much of the pool is affected, not the raw
     // count: a single column that shifts every tick reads the same as one that
-    // shifts once. The pool's body must be completely still; only a handful of
-    // columns at its two extreme ends may move. Measured on this scene the whole
-    // of the remaining movement is confined to 8 columns of the 480 - the world
-    // edge at x=0 and the fringe at x=446..452 - and the other 472 never move.
+    // shifts once. The pool's body must be completely still. With the basin
+    // walled at both ends the pool cannot spread at all, so the only movement
+    // left would be the surface flickering - and that must be zero columns.
     int changedColumnCount = 0;
     for (int x = 0; x < W; ++x) changedColumnCount += changedColumns[x];
 
-    const bool passed = changedColumnCount <= W / 10;
+    const bool passed = changedColumnCount == 0;
     std::printf("a settled pool does not pulse: %s (columns whose surface moved: %d of %d, profile changes %d)\n",
                 passed ? "PASS" : "FAIL", changedColumnCount, W, profileChanges);
     return passed;
@@ -1148,6 +1157,158 @@ bool checkCavesExist() {
     return passed;
 }
 
+// Self-test: snow belongs to the mountain tops and to nothing else.
+//
+// The snow used to be decided by a line drawn straight across the map, so it
+// turned up on flat ground in the lowlands and left peaks bare whenever the
+// hills happened to be high there. Now the snow follows the mountain itself,
+// and this checks that it does.
+bool checkSnowStaysOnTheMountainTops() {
+    World world(512);
+    const int chunks = 40;
+    for (int i = 0; i < chunks; ++i) {
+        Chunk& chunk = world.chunk(i);
+        generateChunk(i, chunk);
+    }
+    const int width = chunks * Chunk::WIDTH;
+
+    // The ground rows, so the lowlands can be told from the peaks.
+    std::vector<std::pair<int, int>> columns;   // (surface row, column)
+    for (int x = 0; x < width; ++x) columns.emplace_back(groundRow(x), x);
+    std::sort(columns.begin(), columns.end());
+
+    // The lowest tenth of the land is lowland. It must be bare.
+    int snowyLowland = 0;
+    for (int i = 0; i < width / 10; ++i) {
+        const int x = columns[i].second;
+        if (mountainHeightAt(x) > 0.0f) continue;   // a mountain can be down there
+        for (int y = 0; y < 512; ++y) {
+            if (world.at(x, y) == Mat::Snow) { ++snowyLowland; break; }
+        }
+    }
+
+    // Every column that has snow must be on a mountain, and the snow must be
+    // the top of the ground, not a layer buried in it.
+    int snowOffMountain = 0;
+    int snowNotOnTop = 0;
+    int snowyColumns = 0;
+    for (int x = 0; x < width; ++x) {
+        int snowTop = -1;
+        int snowRows = 0;
+        for (int y = 0; y < 512; ++y) {
+            if (world.at(x, y) == Mat::Snow) {
+                if (snowTop < 0) snowTop = y;
+                ++snowRows;
+            }
+        }
+        if (snowTop < 0) continue;
+        ++snowyColumns;
+        if (mountainHeightAt(x) <= 0.0f) ++snowOffMountain;
+        // The cap must lie in the band the mountain gives it, and it must rest
+        // on solid ground. A tree standing on the snow does not count against
+        // it - the tree simply takes the top row or two.
+        const int capTop = groundRow(x);
+        const int capBottom = capTop + snowRowsAt(x);
+        const bool insideBand = snowTop >= capTop && snowTop + snowRows <= capBottom;
+        const bool restsOnGround = snowTop + snowRows < 512 &&
+                                   world.at(x, snowTop + snowRows) != Mat::Air;
+        if (!insideBand || !restsOnGround) ++snowNotOnTop;
+    }
+
+    const bool passed = snowyLowland == 0 && snowOffMountain == 0 &&
+                        snowNotOnTop == 0 && snowyColumns > 0;
+    std::printf("snow stays on the mountain tops: %s (%d snowy columns, %d on lowland "
+                "ground, %d off a mountain, %d not on top)\n",
+                passed ? "PASS" : "FAIL", snowyColumns, snowyLowland,
+                snowOffMountain, snowNotOnTop);
+    return passed;
+}
+
+// Self-test: the caves are deep, rare and joined up.
+//
+// They used to reach almost to the surface and fill a tenth of the rock with
+// small pockets. Now they run well down under the ground, take up less of it,
+// and form a few large caverns that run into each other.
+bool checkCavesAreDeepAndJoinedUp() {
+    World world(512);
+    const int chunks = 12;
+    const int width = chunks * Chunk::WIDTH;
+    for (int i = 0; i < chunks; ++i) {
+        Chunk& chunk = world.chunk(i);
+        generateChunk(i, chunk);
+    }
+
+    // Every pocket of air under the ground, and which cavern it belongs to.
+    std::vector<uint8_t> cave(static_cast<size_t>(width) * 512, 0);
+    int shallowest = 1 << 30;
+    long long caveCells = 0;
+    long long groundCells = 0;
+    for (int x = 0; x < width; ++x) {
+        // A pond digs a shallow bowl into the ground on purpose, so the
+        // columns with water in them are left out of the count.
+        bool wet = false;
+        for (int y = 0; y < 512; ++y) {
+            if (world.at(x, y) == Mat::Water) { wet = true; break; }
+        }
+        if (wet) continue;
+        const int surface = groundRow(x);
+        for (int y = surface + 1; y < 509; ++y) {
+            if (world.at(x, y) == Mat::Air) {
+                cave[static_cast<size_t>(y) * width + x] = 1;
+                ++caveCells;
+                shallowest = std::min(shallowest, y - surface);
+            } else {
+                ++groundCells;
+            }
+        }
+    }
+
+    // Count the caverns: how many separate ones there are, and how big the
+    // biggest is.
+    int caverns = 0;
+    long long biggest = 0;
+    std::vector<int> stack;
+    for (int x = 0; x < width; ++x) {
+        for (int y = 0; y < 512; ++y) {
+            const size_t start = static_cast<size_t>(y) * width + x;
+            if (!cave[start]) continue;
+            ++caverns;
+            long long size = 0;
+            stack.clear();
+            stack.push_back(static_cast<int>(start));
+            cave[start] = 0;
+            while (!stack.empty()) {
+                const int cell = stack.back();
+                stack.pop_back();
+                ++size;
+                const int cx = cell % width;
+                const int cy = cell / width;
+                const int dx[4] = {-1, +1, 0, 0};
+                const int dy[4] = {0, 0, -1, +1};
+                for (int d = 0; d < 4; ++d) {
+                    const int nx = cx + dx[d];
+                    const int ny = cy + dy[d];
+                    if (nx < 0 || nx >= width || ny < 0 || ny >= 512) continue;
+                    const size_t next = static_cast<size_t>(ny) * width + nx;
+                    if (!cave[next]) continue;
+                    cave[next] = 0;
+                    stack.push_back(static_cast<int>(next));
+                }
+            }
+            biggest = std::max(biggest, size);
+        }
+    }
+
+    const double share = 100.0 * static_cast<double>(caveCells) /
+                         static_cast<double>(std::max(1LL, caveCells + groundCells));
+    const bool passed = shallowest >= 25 && share < 12.0 && biggest >= 2000 &&
+                        caverns <= chunks * 3;
+    std::printf("caves are deep and joined up: %s (shallowest %d rows down, %.1f%% of the "
+                "rock hollow, %d caverns, biggest %lld cells)\n",
+                passed ? "PASS" : "FAIL", shallowest, share, caverns, biggest);
+    return passed;
+}
+
 // Self-test: a hand-made structure must sit entirely inside its own chunk, or
 // it would be cut in half by the chunk boundary. And it must really be drawn:
 // the material in the chunk has to match the pattern.
@@ -1168,11 +1329,11 @@ bool checkStructuresStayInTheirChunk() {
             if (p.x < chunkLeft || p.x + p.width - 1 > chunkRight) ++outside;
 
             const StructurePattern& pattern = structurePattern(p.kind, p.variant);
-            const int patternHeight = pattern.rowCount;
+            const int lowestFilled = structureLowestFilledRow(pattern);
 
-            for (int row = 0; row < patternHeight; ++row) {
+            for (int row = 0; row <= lowestFilled; ++row) {
                 const char* line = pattern.rows[row];
-                const int worldY = p.y - (patternHeight - 1 - row);
+                const int worldY = p.y - (lowestFilled - row);
                 for (int column = 0; line[column] != '\0'; ++column) {
                     const Mat expected = structureMaterial(line[column]);
                     if (expected == Mat::Air) continue;
@@ -1185,6 +1346,301 @@ bool checkStructuresStayInTheirChunk() {
     const bool passed = total > 0 && outside == 0 && wrong == 0;
     std::printf("structures stay in their chunk: %s (%d structures, %d outside, %d wrong pixels)\n",
                 passed ? "PASS" : "FAIL", total, outside, wrong);
+    return passed;
+}
+
+// Self-test: nothing may be lost or made up while the world is simulated.
+//
+// This is the rule that caught the worst bug in this project. A liquid used to
+// change the material of the cell it moved into, so a pond of water quietly ate
+// the ground under it, and the ground under that, and the whole hillside
+// washed away into the sea - which is what "the liquids destroy all the
+// solids" meant. Materials move; they do not change what they are, and the
+// amount of each material stays exactly the same.
+bool checkMassIsNeverLost() {
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
+    // A stone basin with a pool of water in it, and sand and gravel dropped in
+    // from above to sink through the water to the bottom.
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 210; x < 214; ++x) {
+        for (int y = 150; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 266; x < 270; ++x) {
+        for (int y = 150; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 214; x < 266; ++x) {
+        for (int y = 190; y < 200; ++y) world.set(x, y, Mat::Water);
+    }
+    for (int y = 170; y < 190; ++y) {
+        world.set(240, y, Mat::Sand);
+        world.set(250, y, Mat::Gravel);
+    }
+
+    const float waterBefore = world.totalMass(Mat::Water);
+    const float sandBefore = world.totalMass(Mat::Sand);
+    const float gravelBefore = world.totalMass(Mat::Gravel);
+    const float totalBefore = waterBefore + sandBefore + gravelBefore;
+
+    runSteps(world, 400);
+
+    const float waterAfter = world.totalMass(Mat::Water);
+    const float sandAfter = world.totalMass(Mat::Sand);
+    const float gravelAfter = world.totalMass(Mat::Gravel);
+    const float totalAfter = waterAfter + sandAfter + gravelAfter;
+
+    // A hundredth of a unit is plenty: the arithmetic is in floating point, so
+    // the totals wobble a little in the last bits and nowhere else.
+    const bool kept = std::fabs(waterBefore - waterAfter) < 0.01f &&
+                       std::fabs(sandBefore - sandAfter) < 0.01f &&
+                       std::fabs(gravelBefore - gravelAfter) < 0.01f &&
+                       std::fabs(totalBefore - totalAfter) < 0.01f;
+    std::printf("mass is never lost: %s (water %.2f -> %.2f, sand %.2f -> %.2f, "
+                "gravel %.2f -> %.2f)\n",
+                kept ? "PASS" : "FAIL", waterBefore, waterAfter, sandBefore, sandAfter,
+                gravelBefore, gravelAfter);
+    return kept;
+}
+
+// Self-test: a cell holds one unit of material, never more.
+//
+// A liquid used to be allowed to squash itself into fewer and fuller cells, so
+// a lake in a stone cup sank to half the depth it was poured at, and the
+// surface of a pond kept changing as the water below it packed itself down.
+// The amount of material in the world does not change; how it is packed into
+// cells does.
+bool checkNoCellHoldsMoreThanOneUnit() {
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 210; x < 214; ++x) {
+        for (int y = 150; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 266; x < 270; ++x) {
+        for (int y = 150; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    // A deep pool, exactly filling the basin.
+    for (int x = 214; x < 266; ++x) {
+        for (int y = 180; y < 200; ++y) world.set(x, y, Mat::Water);
+    }
+
+    Simulation sim(world);
+    float heaviest = 0.0f;
+    int overfull = 0;
+    for (int tick = 0; tick < 300; ++tick) {
+        sim.step(world);
+        if (tick % 10 != 0) continue;
+        for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+            for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+                const float m = world.mass(x, y);
+                if (m > heaviest) heaviest = m;
+                if (m > 1.0f) ++overfull;
+            }
+        }
+    }
+
+    const bool passed = overfull == 0;
+    std::printf("no cell holds more than one unit: %s (heaviest %.3f, %d overfull cells)\n",
+                passed ? "PASS" : "FAIL", heaviest, overfull);
+    return passed;
+}
+
+// Self-test: sand dropped into water sinks to the bottom and stays there.
+//
+// A grain is heavier than water, so it goes through it, and the water closes
+// up above it. If the sand stayed on the surface the water would be holding it
+// up, and the pond would slowly silt itself up.
+bool checkSandSinksThroughWater() {
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 210; x < 214; ++x) {
+        for (int y = 150; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 266; x < 270; ++x) {
+        for (int y = 150; y < 200; ++y) world.set(x, y, Mat::Stone);
+    }
+    for (int x = 214; x < 266; ++x) {
+        for (int y = 186; y < 200; ++y) world.set(x, y, Mat::Water);
+    }
+    // A block of sand hanging in the middle of the pool.
+    for (int x = 236; x < 244; ++x) {
+        for (int y = 150; y < 160; ++y) world.set(x, y, Mat::Sand);
+    }
+
+    runSteps(world, 400);
+
+    // The sand must be at the bottom of the basin, under the water.
+    int sandTop = MAX_GRID_HEIGHT;
+    int sandBottom = -1;
+    int waterTop = MAX_GRID_HEIGHT;
+    for (int x = 214; x < 266; ++x) {
+        for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+            if (world.at(x, y) == Mat::Water) {
+                waterTop = std::min(waterTop, y);
+                break;
+            }
+        }
+    }
+    for (int x = 236; x < 244; ++x) {
+        for (int y = 0; y < MAX_GRID_HEIGHT; ++y) {
+            if (world.at(x, y) != Mat::Sand) continue;
+            sandTop = std::min(sandTop, y);
+            sandBottom = std::max(sandBottom, y);
+        }
+    }
+
+    const bool sank = sandBottom > 0 && sandTop > waterTop;
+    const bool resting = sandBottom >= 199;   // sitting on the stone floor
+    const bool passed = sank && resting && world.count(Mat::Sand) == 80;
+    std::printf("sand sinks through water: %s (sand rows %d..%d, water surface row %d, "
+                "%d grains left)\n",
+                passed ? "PASS" : "FAIL", sandTop, sandBottom, waterTop, world.count(Mat::Sand));
+    return passed;
+}
+
+// Self-test: the pond in the generated world must hold its water.
+//
+// The pond is dug into the ground and walled with rock at both ends. If the
+// ground is not flat where the pond goes, the bowl comes out as a stepped pit
+// and the water ends up in the deepest step with the shallow ones left dry; if
+// the floor is not walled, a cave under the pond swallows the water whole.
+bool checkPondKeepsItsWater() {
+    World world(512);
+    generateChunksAround(world, 0, 6);
+
+    // The surface row of the water in every column that has any.
+    std::map<int, int> before;
+    for (int x = 0; x < 6 * Chunk::WIDTH; ++x) {
+        for (int y = 0; y < 512; ++y) {
+            if (world.at(x, y) != Mat::Water) continue;
+            before[x] = y;
+            break;
+        }
+    }
+    // The water in the pond itself, not the water everywhere in the world:
+    // clay that melts next to the deep lava turns into water too, and that
+    // has nothing to do with the pond holding on to what is in it.
+    auto pondWater = [&world](const std::map<int, int>& rows) {
+        float total = 0.0f;
+        for (const auto& entry : rows) {
+            for (int y = entry.second; y < entry.second + 16 && y < 512; ++y) {
+                if (world.at(entry.first, y) == Mat::Water) total += world.mass(entry.first, y);
+            }
+        }
+        return total;
+    };
+    const float waterBefore = pondWater(before);
+    if (before.empty()) {
+        std::printf("pond keeps its water: FAIL (no pond was generated)\n");
+        return false;
+    }
+
+    Simulation sim(world);
+    SimRect region;
+    region.x0 = 0;
+    region.x1 = 6 * Chunk::WIDTH - 1;
+    region.y0 = 0;
+    region.y1 = 511;
+    for (int i = 0; i < 300; ++i) sim.step(world, region);
+
+    const float waterAfter = pondWater(before);
+
+    // Every column that had water still has water at the same level.
+    int moved = 0;
+    for (const auto& entry : before) {
+        int row = -1;
+        for (int y = 0; y < 512; ++y) {
+            if (world.at(entry.first, y) == Mat::Water) { row = y; break; }
+        }
+        if (row != entry.second) ++moved;
+    }
+
+    const bool kept = std::fabs(waterBefore - waterAfter) < 0.01f && moved == 0;
+    std::printf("pond keeps its water: %s (water %.2f -> %.2f, %d of %d columns changed level)\n",
+                kept ? "PASS" : "FAIL", waterBefore, waterAfter, moved,
+                static_cast<int>(before.size()));
+    return kept;
+}
+
+// Self-test: every structure must stand on the ground.
+//
+// A structure whose foot is one row too low is buried in the dirt; one row too
+// high hovers in the air with nothing under it. The foot of a pattern is the
+// lowest row that has anything in it - a ruined wall whose base has eroded
+// away still has to stand on the part that is left.
+bool checkStructuresStandOnTheGround() {
+    World world(512);
+    int total = 0;
+    int floating = 0;
+    int buried = 0;
+    for (int i = 0; i < 12; ++i) {
+        Chunk& chunk = world.chunk(i);
+        std::vector<StructurePlacement> placements;
+        generateChunk(i, chunk, &placements);
+        for (const StructurePlacement& p : placements) {
+            const StructurePattern& pattern = structurePattern(p.kind, p.variant);
+            const int lowestFilled = structureLowestFilledRow(pattern);
+            for (int column = 0; column < structurePatternWidth(pattern); ++column) {
+                const char c = pattern.rows[lowestFilled][column];
+                if (c == '\0' || c == '.') continue;   // nothing stands here
+                ++total;
+                const int x = p.x + column;
+                // The cell on the ground must be the pattern's own material.
+                if (world.at(x, p.y) != structureMaterial(c)) ++buried;
+                // And the cell under it must be solid ground, not air.
+                const Mat below = world.at(x, p.y + 1);
+                if (below == Mat::Air || materialInfo(below).flows) ++floating;
+            }
+        }
+    }
+    const bool passed = total > 0 && floating == 0 && buried == 0;
+    std::printf("structures stand on the ground: %s (%d feet, %d floating, %d buried)\n",
+                passed ? "PASS" : "FAIL", total, floating, buried);
+    return passed;
+}
+
+// Self-test: water lying on soil must not eat the ground away.
+//
+// The water softens the top layer of the bed into mud, and that is all: one
+// wet layer, no more. When the mud was allowed to run away like a liquid, the
+// pond drained into its own bed, that bed turned to mud and ran away too, and
+// the whole hillside was washed into the sea.
+bool checkWaterDoesNotErodeItsBed() {
+    World world(MAX_GRID_HEIGHT);
+    world.fill(0, MAX_GRID_WIDTH - 1, Mat::Air);
+    for (int x = 0; x < MAX_GRID_WIDTH; ++x) {
+        for (int y = 200; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
+    }
+    // A bed of soil, 20 rows deep, with a pool of water lying on it.
+    for (int x = 214; x < 266; ++x) {
+        for (int y = 180; y < 200; ++y) world.set(x, y, Mat::Soil);
+    }
+    for (int x = 214; x < 266; ++x) {
+        for (int y = 170; y < 180; ++y) world.set(x, y, Mat::Water);
+    }
+
+    const float waterBefore = world.totalMass(Mat::Water);
+    const int soilBefore = world.count(Mat::Soil);
+    runSteps(world, 300);
+
+    const float waterAfter = world.totalMass(Mat::Water);
+    const int mud = world.count(Mat::Mud);
+    const int soilAfter = world.count(Mat::Soil);
+
+    // The bed must still be there: the wet layer is at most two cells deep, and
+    // the water has not sunk into it.
+    const bool bedIntact = mud <= 2 * 52 && soilAfter > soilBefore - 3 * 52;
+    const bool waterKept = std::fabs(waterBefore - waterAfter) < 0.01f;
+    const bool passed = bedIntact && waterKept && mud > 0;
+    std::printf("water does not erode its bed: %s (soil %d -> %d, mud %d, water %.2f -> %.2f)\n",
+                passed ? "PASS" : "FAIL", soilBefore, soilAfter, mud, waterBefore, waterAfter);
     return passed;
 }
 
@@ -1553,10 +2009,20 @@ int runSelfTest() {
     // The endless world.
     if (!checkChunksAreDeterministic()) passed = false;
     if (!checkTerrainVaries()) passed = false;
+    if (!checkSnowStaysOnTheMountainTops()) passed = false;
     if (!checkCavesExist()) passed = false;
+    if (!checkCavesAreDeepAndJoinedUp()) passed = false;
     if (!checkStructuresStayInTheirChunk()) passed = false;
+    if (!checkStructuresStandOnTheGround()) passed = false;
     if (!checkTreesDoNotBlockHeads()) passed = false;
     if (!checkDamageSurvives()) passed = false;
+
+    // The rules the whole world stands on.
+    if (!checkMassIsNeverLost()) passed = false;
+    if (!checkNoCellHoldsMoreThanOneUnit()) passed = false;
+    if (!checkSandSinksThroughWater()) passed = false;
+    if (!checkWaterDoesNotErodeItsBed()) passed = false;
+    if (!checkPondKeepsItsWater()) passed = false;
 
     return passed ? 0 : 1;
 }

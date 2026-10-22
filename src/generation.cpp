@@ -14,6 +14,17 @@ namespace {
 // are, where the caves run, what is buried where.
 constexpr uint32_t kWorldSeed = 0x9E3779B9u;
 
+constexpr int kCaveRoof = 30;
+constexpr float kCaveThreshold = 0.62f;
+constexpr float kCaveDepthBias = 0.08f;
+constexpr float kCaveBasement = 0.12f;
+constexpr float kCaveWidth = 900.0f;
+constexpr float kCaveHeight = 700.0f;
+constexpr float kCaveSlice = 600.0f;
+constexpr float kCaveWarp = 150.0f;
+constexpr int kCaveOctaves = 1;
+constexpr int kCaveStep = 8;
+
 // -- Noise -----------------------------------------------------------------
 //
 // Everything the generator decides comes out of these. They are not random:
@@ -411,6 +422,24 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
 // so a cavern is the same distance under the ground everywhere. A flat layer
 // instead would come close to the surface under a hill and sink out of reach
 // under a valley.
+float caveField(int worldX, int y, int surface) {
+    const float depth = static_cast<float>(y - surface);
+    const float fx = static_cast<float>(worldX);
+    const float slice = fbm1(fx / 1500.0f, kWorldSeed + 71u, 2) * 5.0f;
+    const float wx = (noise3(fx / 380.0f, depth / 340.0f, slice / 320.0f, kWorldSeed + 43u) - 0.5f) * kCaveWarp;
+    const float wy = (noise3(fx / 360.0f, depth / 320.0f, slice / 300.0f, kWorldSeed + 47u) - 0.5f) * kCaveWarp;
+    const float wz = (noise3(fx / 340.0f, depth / 300.0f, slice / 280.0f, kWorldSeed + 49u) - 0.5f) * kCaveWarp;
+    return fbm3((fx + wx) / kCaveWidth, (depth + wy) / kCaveHeight, (slice + wz) / kCaveSlice, kWorldSeed + 41u, kCaveOctaves);
+}
+
+float caveThreshold(int worldX, int y, int surface) {
+    (void)worldX;
+    const float depth = static_cast<float>(y - surface);
+    const float belt = std::min(1.0f, std::max(0.0f, (depth - 60.0f) / 400.0f));
+    const float basement = std::min(1.0f, std::max(0.0f, (depth - 900.0f) / 700.0f));
+    return kCaveThreshold - kCaveDepthBias * belt + kCaveBasement * basement;
+}
+
 // -- Drawing the hand-made patterns ----------------------------------------
 
 // Puts one hand-made pattern into a chunk, standing on the ground at `baseX`
@@ -927,6 +956,30 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             chunk.cells[cell] = static_cast<uint8_t>(m);
             chunk.life[cell] = 0;
             chunk.mass[cell] = 0.0f;
+        }
+    }
+
+    // 2. Caves, hollowed out of the rock.
+    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
+        const int worldX = baseX + lx;
+        const int surface = groundRow(worldX);
+        const int bottom = height - 3;
+        int y = surface + kCaveRoof;
+        float previous = caveField(worldX, y, surface);
+        while (y < bottom) {
+            const int nextY = std::min(y + kCaveStep, bottom);
+            const float next = caveField(worldX, nextY, surface);
+            for (int row = y; row < nextY; ++row) {
+                const float t = static_cast<float>(row - y) / static_cast<float>(nextY - y);
+                const float ss = t * t * (3.0f - 2.0f * t);
+                const float field = previous + (next - previous) * ss;
+                if (field <= caveThreshold(worldX, row, surface)) continue;
+                const size_t cell = chunk.index(lx, row);
+                chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
+                chunk.mass[cell] = 0.0f;
+            }
+            previous = next;
+            y = nextY;
         }
     }
 

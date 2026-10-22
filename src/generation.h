@@ -46,6 +46,7 @@ void generateChunk(int index, Chunk& chunk,
 // endless, so this is called as the player explores.
 void generateChunksAround(World& world, int worldX, int radius);
 
+
 // The row of the ground surface at a world column: the first solid row. The
 // same column always gives the same row, so neighbouring chunks agree where
 // they meet.

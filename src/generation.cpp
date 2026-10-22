@@ -481,7 +481,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     struct Carver { float x, y, angle, speed; int radius, life; uint32_t seed; };
     std::vector<Carver> queue;
 
-    const int numCarvers = (chunkEnd - chunkStart + 1) * 2;
+    const int numCarvers = (chunkEnd - chunkStart + 1) * 8;
     for (int i = 0; i < numCarvers; ++i) {
         uint32_t s = hashBits(i, static_cast<int>(kWorldSeed), 7);
         int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
@@ -493,8 +493,8 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         c.y = static_cast<float>(y);
         c.angle = static_cast<float>(s % 360u) * 0.0174533f;
         c.speed = 1.0f;
-        c.radius = 2;
-        c.life = 120 + static_cast<int>((s >> 12) % 80u);
+        c.radius = 4;
+        c.life = 350 + static_cast<int>((s >> 12) % 200u);
         c.seed = s;
         queue.push_back(c);
     }
@@ -510,6 +510,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
                     int cy = static_cast<int>(std::lround(c.y)) + dy;
                     if (cx < worldX0 || cx >= worldX1 || cy < 0 || cy >= height - 3) continue;
                     int surf = groundRow(cx);
+                    if (cy < surf + 20) { c.y = surf + 20; /* clamp */ }
                     if (cy < surf + 20) continue;
                     if (world.at(cx, cy) == Mat::Water) continue;
                     if (world.at(cx, cy + 1) == Mat::Water) continue;
@@ -1009,30 +1010,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             chunk.cells[cell] = static_cast<uint8_t>(m);
             chunk.life[cell] = 0;
             chunk.mass[cell] = 0.0f;
-        }
-    }
-
-    // 2. Caves, hollowed out of the rock.
-    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
-        const int worldX = baseX + lx;
-        const int surface = groundRow(worldX);
-        const int bottom = height - 3;
-        int y = surface + kCaveRoof;
-        float previous = caveField(worldX, y, surface);
-        while (y < bottom) {
-            const int nextY = std::min(y + kCaveStep, bottom);
-            const float next = caveField(worldX, nextY, surface);
-            for (int row = y; row < nextY; ++row) {
-                const float t = static_cast<float>(row - y) / static_cast<float>(nextY - y);
-                const float ss = t * t * (3.0f - 2.0f * t);
-                const float field = previous + (next - previous) * ss;
-                if (field <= caveThreshold(worldX, row, surface)) continue;
-                const size_t cell = chunk.index(lx, row);
-                chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
-                chunk.mass[cell] = 0.0f;
-            }
-            previous = next;
-            y = nextY;
         }
     }
 

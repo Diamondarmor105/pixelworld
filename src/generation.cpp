@@ -490,60 +490,12 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         }
     }
 
-    // Step 3: Worm carvers (drunkard walk) for long tunnels.
-    struct Carver { float x,y,angle,speed; int radius,life; uint32_t seed; };
-    std::vector<Carver> queue;
-    const int numWorms = (chunkEnd-chunkStart+1) * 2;
-    for (int i=0;i<numWorms;++i){
-        uint32_t s=hashBits(i+3000,static_cast<int>(kWorldSeed),7);
-        int x=worldX0+static_cast<int>(s % static_cast<uint32_t>(worldX1-worldX0));
-        int surf=groundRow(x);
-        int y=surf+150+static_cast<int>((s>>8)%200u);
-        if (y>height-200) y=height-200;
-        Carver c; c.x=x; c.y=y; c.angle=static_cast<float>(s%360u)*0.0174533f;
-        c.speed=1.0f; c.radius=2+static_cast<int>((s>>4)%3u);
-        c.life=150+static_cast<int>((s>>12)%150u); c.seed=s;
-        queue.push_back(c);
-    }
-    // Surface entrances
-    const int numShafts=0;
-    for (int i=0;i<numShafts;++i){
-        uint32_t s=hashBits(i+7000,static_cast<int>(kWorldSeed),13);
-        int x=worldX0+static_cast<int>(s % static_cast<uint32_t>(worldX1-worldX0));
-        int surf=groundRow(x);
-        Carver c; c.x=x; c.y=surf+22; c.angle=1.5708f; c.speed=1.0f; c.radius=2;
-        c.life=40+static_cast<int>((s>>8)%30u); c.seed=s;
-        queue.push_back(c);
-    }
-    size_t qi=0;
-    while(qi<queue.size()){
-        Carver c=queue[qi++];
-        for(int step=0;step<c.life;++step){
-            for(int dy=-c.radius;dy<=c.radius;++dy)
-                for(int dx=-c.radius;dx<=c.radius;++dx){
-                    if(dx*dx+dy*dy>c.radius*c.radius) continue;
-                    int cx=static_cast<int>(std::lround(c.x))+dx;
-                    int cy=static_cast<int>(std::lround(c.y))+dy;
-                    if(cx<worldX0||cx>=worldX1||cy<0||cy>=height-3) continue;
-                    int surf=groundRow(cx);
-                    if(cy<surf+20) continue;
-                    if(world.at(cx,cy)==Mat::Water) continue;
-                    world.set(cx,cy,Mat::Air);
-                }
-            uint32_t h=hashBits(static_cast<int>(c.x),static_cast<int>(c.y),step+static_cast<int>(c.seed));
-            c.angle+=(static_cast<float>(h&0xFFFFu)/65535.0f-0.5f)*0.4f;
-            c.x+=std::cos(c.angle)*c.speed;
-            c.y+=std::sin(c.angle)*c.speed;
-            if(c.x<worldX0||c.x>=worldX1||c.y<0||c.y>=height-10) break;
-        }
-    }
-
     // Step 4: Simplex noise masks for large open caverns (deep).
     for (int x=worldX0;x<worldX1;++x){
         int surf=groundRow(x);
-        for (int y=surf+300;y<height-3;++y){
+        for (int y=surf+400;y<height-3;++y){
             float n=noise2(static_cast<float>(x)/60.0f,static_cast<float>(y)/60.0f,kWorldSeed+800u);
-            if (n>0.82f) {
+            if (n>0.85f) {
                 if (world.at(x,y)!=Mat::Water && world.at(x,y+1)!=Mat::Water) world.set(x,y,Mat::Air);
             }
         }

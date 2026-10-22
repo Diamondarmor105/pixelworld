@@ -422,24 +422,6 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
 // so a cavern is the same distance under the ground everywhere. A flat layer
 // instead would come close to the surface under a hill and sink out of reach
 // under a valley.
-float caveField(int worldX, int y, int surface) {
-    const float depth = static_cast<float>(y - surface);
-    const float fx = static_cast<float>(worldX);
-    const float slice = fbm1(fx / 1500.0f, kWorldSeed + 71u, 2) * 5.0f;
-    const float wx = (noise3(fx / 380.0f, depth / 340.0f, slice / 320.0f, kWorldSeed + 43u) - 0.5f) * kCaveWarp;
-    const float wy = (noise3(fx / 360.0f, depth / 320.0f, slice / 300.0f, kWorldSeed + 47u) - 0.5f) * kCaveWarp;
-    const float wz = (noise3(fx / 340.0f, depth / 300.0f, slice / 280.0f, kWorldSeed + 49u) - 0.5f) * kCaveWarp;
-    return fbm3((fx + wx) / kCaveWidth, (depth + wy) / kCaveHeight, (slice + wz) / kCaveSlice, kWorldSeed + 41u, kCaveOctaves);
-}
-
-float caveThreshold(int worldX, int y, int surface) {
-    (void)worldX;
-    const float depth = static_cast<float>(y - surface);
-    const float belt = std::min(1.0f, std::max(0.0f, (depth - 60.0f) / 400.0f));
-    const float basement = std::min(1.0f, std::max(0.0f, (depth - 900.0f) / 700.0f));
-    return kCaveThreshold - kCaveDepthBias * belt + kCaveBasement * basement;
-}
-
 // -- Drawing the hand-made patterns ----------------------------------------
 
 // Puts one hand-made pattern into a chunk, standing on the ground at `baseX`
@@ -481,24 +463,52 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     struct Carver { float x, y, angle, speed; int radius, life; uint32_t seed; };
     std::vector<Carver> queue;
 
-    const int numCarvers = (chunkEnd - chunkStart + 1) * 8;
-    for (int i = 0; i < numCarvers; ++i) {
-        uint32_t s = hashBits(i, static_cast<int>(kWorldSeed), 7);
-        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
-        int surface = groundRow(x);
-        int y = surface + 60 + static_cast<int>((s >> 8) % 80u);
+    auto spawnCarver = [&](int x, int y, float angle, int radius, int life, uint32_t seed) {
         if (y > height - 200) y = height - 200;
+        if (y < 0) y = 0;
         Carver c;
         c.x = static_cast<float>(x);
         c.y = static_cast<float>(y);
-        c.angle = static_cast<float>(s % 360u) * 0.0174533f;
+        c.angle = angle;
         c.speed = 1.0f;
-        c.radius = 4;
-        c.life = 350 + static_cast<int>((s >> 12) % 200u);
-        c.seed = s;
+        c.radius = radius;
+        c.life = life;
+        c.seed = seed;
         queue.push_back(c);
+    };
+
+    // Pass 1: Surface entrances (vertical shafts dropping from the surface).
+    const int numShafts = (chunkEnd - chunkStart + 1) * 2;
+    for (int i = 0; i < numShafts; ++i) {
+        uint32_t s = hashBits(i + 7000, static_cast<int>(kWorldSeed), 13);
+        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
+        int surface = groundRow(x);
+        spawnCarver(x, surface + 22, 1.5708f, 2, 40 + static_cast<int>((s >> 8) % 30u), s);
     }
 
+    // Pass 2: Shallow underground carvers (sparse, small).
+    const int numShallow = (chunkEnd - chunkStart + 1) * 2;
+    for (int i = 0; i < numShallow; ++i) {
+        uint32_t s = hashBits(i + 1000, static_cast<int>(kWorldSeed), 7);
+        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
+        int surface = groundRow(x);
+        int y = surface + 60 + static_cast<int>((s >> 8) % 60u);
+        spawnCarver(x, y, static_cast<float>(s % 360u) * 0.0174533f, 2,
+                    100 + static_cast<int>((s >> 12) % 60u), s);
+    }
+
+    // Pass 3: Deep cavern carvers (denser, bigger, branching).
+    const int numDeep = (chunkEnd - chunkStart + 1) * 4;
+    for (int i = 0; i < numDeep; ++i) {
+        uint32_t s = hashBits(i + 2000, static_cast<int>(kWorldSeed), 7);
+        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
+        int surface = groundRow(x);
+        int y = surface + 200 + static_cast<int>((s >> 8) % 200u);
+        spawnCarver(x, y, static_cast<float>(s % 360u) * 0.0174533f, 3,
+                    200 + static_cast<int>((s >> 12) % 150u), s);
+    }
+
+    // Run the carvers.
     size_t qi = 0;
     while (qi < queue.size()) {
         Carver c = queue[qi++];
@@ -510,7 +520,6 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
                     int cy = static_cast<int>(std::lround(c.y)) + dy;
                     if (cx < worldX0 || cx >= worldX1 || cy < 0 || cy >= height - 3) continue;
                     int surf = groundRow(cx);
-                    if (cy < surf + 20) { c.y = surf + 20; /* clamp */ }
                     if (cy < surf + 20) continue;
                     if (world.at(cx, cy) == Mat::Water) continue;
                     if (world.at(cx, cy + 1) == Mat::Water) continue;
@@ -521,8 +530,67 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
             c.angle += (static_cast<float>(h & 0xFFFFu) / 65535.0f - 0.5f) * 0.4f;
             c.x += std::cos(c.angle) * c.speed;
             c.y += std::sin(c.angle) * c.speed;
+            // Branch occasionally in deep caverns.
+            if (c.y > 400.0f && (h & 0x3Fu) == 0u && queue.size() < 500) {
+                Carver child = c;
+                child.angle += 0.9f;
+                child.life = c.life / 2;
+                child.radius = std::max(2, c.radius - 1);
+                child.seed = h;
+                queue.push_back(child);
+            }
             if (c.x < worldX0 || c.x >= worldX1 || c.y < 0 || c.y >= height - 10) break;
         }
+    }
+
+    // Pass 4: Pocket pass (elliptical chambers).
+    const int numPockets = (chunkEnd - chunkStart + 1) * 3;
+    for (int i = 0; i < numPockets; ++i) {
+        uint32_t s = hashBits(i + 5000, static_cast<int>(kWorldSeed), 19);
+        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
+        int surface = groundRow(x);
+        int cy = surface + 120 + static_cast<int>((s >> 8) % 300u);
+        if (cy > height - 100) cy = height - 100;
+        int rx = 6 + static_cast<int>((s >> 4) % 8u);
+        int ry = 4 + static_cast<int>((s >> 12) % 6u);
+        for (int dy = -ry; dy <= ry; ++dy) {
+            for (int dx = -rx; dx <= rx; ++dx) {
+                float nx = static_cast<float>(dx) / rx;
+                float ny = static_cast<float>(dy) / ry;
+                if (nx * nx + ny * ny > 1.0f) continue;
+                int px = x + dx;
+                int py = cy + dy;
+                if (px < worldX0 || px >= worldX1 || py < 0 || py >= height - 3) continue;
+                int surf = groundRow(px);
+                if (py < surf + 20) continue;
+                if (world.at(px, py) == Mat::Water) continue;
+                world.set(px, py, Mat::Air);
+            }
+        }
+    }
+
+    // Pass 5: Cellular automata smoothing — remove isolated air cells and
+    // floating scraps (a cell is removed if it has too few air neighbours).
+    // Run a few iterations.
+    for (int iter = 0; iter < 2; ++iter) {
+        std::vector<std::pair<int,int>> toFill;
+        for (int x = worldX0; x < worldX1; ++x) {
+            for (int y = 0; y < height - 3; ++y) {
+                if (world.at(x, y) != Mat::Air) continue;
+                int airNeigh = 0;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
+                        if (world.at(nx, ny) == Mat::Air) ++airNeigh;
+                    }
+                }
+                // Isolated cell or tiny pocket: fill it back in.
+                if (airNeigh <= 1) toFill.emplace_back(x, y);
+            }
+        }
+        for (auto& p : toFill) world.set(p.first, p.second, Mat::Stone);
     }
 }
 

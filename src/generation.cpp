@@ -457,7 +457,71 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 
 
 void carveCaves(World& world, int chunkStart, int chunkEnd) {
-    (void)world; (void)chunkStart; (void)chunkEnd;
+    const int worldX0 = chunkStart * Chunk::WIDTH;
+    const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
+    const int height = world.height();
+    const int width = worldX1 - worldX0;
+
+    for (int x = worldX0; x < worldX1; ++x) {
+        int surf = groundRow(x);
+        for (int y = surf + 20; y < height - 100; ++y) {
+            float depth = static_cast<float>(y - surf);
+            float depthFactor = std::min(1.0f, std::max(0.0f, (depth - 20.0f) / 400.0f));
+            // Small caves near surface, larger deeper.
+            float scale = 15.0f + depthFactor * 30.0f;
+            if (scale > 50.0f) scale = 50.0f;
+            float n = noise2(static_cast<float>(x) / scale, static_cast<float>(y) / scale, kWorldSeed + 1200u) * 2.0f - 1.0f;
+            float ridged = std::fabs(n);
+            // Roughness: per-cell noise jitters the threshold for jagged walls.
+            float rough = noise2(static_cast<float>(x) * 0.9f, static_cast<float>(y) * 0.9f, kWorldSeed + 1300u);
+            // Stricter near surface (fewer caves), looser deep.
+            float thresh = 0.10f + depthFactor * 0.08f;
+            if (ridged + (rough - 0.5f) * 0.15f < thresh) {
+                if (world.at(x, y) != Mat::Water && world.at(x, y + 1) != Mat::Water) {
+                    world.set(x, y, Mat::Air);
+                }
+            }
+        }
+    }
+
+    // Remove tiny isolated pockets: flood-fill each air region and fill any
+    // region smaller than kMinCave cells. What is left reads as caves, not dust.
+    constexpr int kMinCave = 12;
+    std::vector<uint8_t> seen(static_cast<size_t>(width) * height, 0);
+    std::vector<int> stack;
+    std::vector<int> region;
+    auto idx = [&](int x, int y) { return static_cast<size_t>(y) * width + (x - worldX0); };
+    for (int x = worldX0; x < worldX1; ++x) {
+        for (int y = 0; y < height - 3; ++y) {
+            if (world.at(x, y) != Mat::Air || seen[idx(x, y)]) continue;
+            region.clear();
+            stack.clear();
+            stack.push_back(x);
+            stack.push_back(y);
+            seen[idx(x, y)] = 1;
+            while (!stack.empty()) {
+                int cy = stack.back(); stack.pop_back();
+                int cx = stack.back(); stack.pop_back();
+                region.push_back(cx);
+                region.push_back(cy);
+                const int dx[4] = {-1, 1, 0, 0};
+                const int dy[4] = {0, 0, -1, 1};
+                for (int d = 0; d < 4; ++d) {
+                    int nx = cx + dx[d], ny = cy + dy[d];
+                    if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
+                    if (seen[idx(nx, ny)] || world.at(nx, ny) != Mat::Air) continue;
+                    seen[idx(nx, ny)] = 1;
+                    stack.push_back(nx);
+                    stack.push_back(ny);
+                }
+            }
+            if (region.size() / 2 < static_cast<size_t>(kMinCave)) {
+                for (size_t i = 0; i < region.size(); i += 2) {
+                    world.set(region[i], region[i + 1], Mat::Stone);
+                }
+            }
+        }
+    }
 }
 
 // -- The hand-made test scenes ----------------------------------------------

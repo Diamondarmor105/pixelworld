@@ -493,7 +493,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     // Step 3: Worm carvers (drunkard walk) for long tunnels.
     struct Carver { float x,y,angle,speed; int radius,life; uint32_t seed; };
     std::vector<Carver> queue;
-    const int numWorms = (chunkEnd-chunkStart+1) * 6;
+    const int numWorms = (chunkEnd-chunkStart+1) * 3;
     for (int i=0;i<numWorms;++i){
         uint32_t s=hashBits(i+3000,static_cast<int>(kWorldSeed),7);
         int x=worldX0+static_cast<int>(s % static_cast<uint32_t>(worldX1-worldX0));
@@ -506,7 +506,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         queue.push_back(c);
     }
     // Surface entrances
-    const int numShafts=(chunkEnd-chunkStart+1)*2;
+    const int numShafts=(chunkEnd-chunkStart+1)*1;
     for (int i=0;i<numShafts;++i){
         uint32_t s=hashBits(i+7000,static_cast<int>(kWorldSeed),13);
         int x=worldX0+static_cast<int>(s % static_cast<uint32_t>(worldX1-worldX0));
@@ -543,7 +543,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         int surf=groundRow(x);
         for (int y=surf+200;y<height-3;++y){
             float n=noise2(static_cast<float>(x)/60.0f,static_cast<float>(y)/60.0f,kWorldSeed+800u);
-            if (n>0.72f) {
+            if (n>0.78f) {
                 if (world.at(x,y)!=Mat::Water && world.at(x,y+1)!=Mat::Water) world.set(x,y,Mat::Air);
             }
         }

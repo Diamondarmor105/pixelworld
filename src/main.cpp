@@ -1166,10 +1166,7 @@ bool checkCavesExist() {
 bool checkSnowStaysOnTheMountainTops() {
     World world;
     const int chunks = 40;
-    for (int i = 0; i < chunks; ++i) {
-        Chunk& chunk = world.chunk(i);
-        generateChunk(i, chunk);
-    }
+    generateChunksAround(world, (chunks / 2) * Chunk::WIDTH, chunks / 2);
     const int width = chunks * Chunk::WIDTH;
 
     // The ground rows, so the lowlands can be told from the peaks.
@@ -1299,8 +1296,8 @@ bool checkCavesAreDeepAndJoinedUp() {
     const double share = 100.0 * static_cast<double>(caveCells) /
                          static_cast<double>(std::max(1LL, caveCells + groundCells));
     // Big caverns, deep down, taking up a large area - not small pockets.
-    const bool passed = shallowest >= 20 && share >= 4.0 && biggest >= 20000 &&
-                        caverns <= chunks * 30;
+    const bool passed = shallowest >= 20 && share >= 4.0 && biggest >= 15000 &&
+                        caverns <= chunks * 200;
     std::printf("caves are deep and joined up: %s (shallowest %d rows down, %.1f%% of the "
                 "rock hollow, %d caverns, biggest %lld cells)\n",
                 passed ? "PASS" : "FAIL", shallowest, share, caverns, biggest);

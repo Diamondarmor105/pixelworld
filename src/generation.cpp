@@ -14,17 +14,6 @@ namespace {
 // are, where the caves run, what is buried where.
 constexpr uint32_t kWorldSeed = 0x9E3779B9u;
 
-constexpr int kCaveRoof = 30;
-constexpr float kCaveThreshold = 0.62f;
-constexpr float kCaveDepthBias = 0.08f;
-constexpr float kCaveBasement = 0.12f;
-constexpr float kCaveWidth = 900.0f;
-constexpr float kCaveHeight = 700.0f;
-constexpr float kCaveSlice = 600.0f;
-constexpr float kCaveWarp = 150.0f;
-constexpr int kCaveOctaves = 1;
-constexpr int kCaveStep = 8;
-
 // -- Noise -----------------------------------------------------------------
 //
 // Everything the generator decides comes out of these. They are not random:
@@ -460,161 +449,120 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
     const int height = world.height();
 
-    struct Carver { float x, y, angle, speed; int radius, life; uint32_t seed; };
-    std::vector<Carver> queue;
-
-    auto spawnCarver = [&](int x, int y, float angle, int radius, int life, uint32_t seed) {
-        if (y > height - 200) y = height - 200;
-        if (y < 0) y = 0;
-        Carver c;
-        c.x = static_cast<float>(x);
-        c.y = static_cast<float>(y);
-        c.angle = angle;
-        c.speed = 1.0f;
-        c.radius = radius;
-        c.life = life;
-        c.seed = seed;
-        queue.push_back(c);
-    };
-
-    // Pass 1: Surface entrances (vertical shafts dropping from the surface).
-    const int numShafts = (chunkEnd - chunkStart + 1) * 2;
-    for (int i = 0; i < numShafts; ++i) {
-        uint32_t s = hashBits(i + 7000, static_cast<int>(kWorldSeed), 13);
-        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
-        int surface = groundRow(x);
-        spawnCarver(x, surface + 22, 1.5708f, 2, 40 + static_cast<int>((s >> 8) % 30u), s);
-    }
-
-    // Pass 2: Shallow underground carvers (sparse, small).
-    const int numShallow = (chunkEnd - chunkStart + 1) * 2;
-    for (int i = 0; i < numShallow; ++i) {
-        uint32_t s = hashBits(i + 1000, static_cast<int>(kWorldSeed), 7);
-        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
-        int surface = groundRow(x);
-        int y = surface + 60 + static_cast<int>((s >> 8) % 60u);
-        spawnCarver(x, y, static_cast<float>(s % 360u) * 0.0174533f, 2,
-                    100 + static_cast<int>((s >> 12) % 60u), s);
-    }
-
-    // Pass 3: Deep cavern carvers (denser, bigger, branching).
-    const int numDeep = (chunkEnd - chunkStart + 1) * 4;
-    for (int i = 0; i < numDeep; ++i) {
-        uint32_t s = hashBits(i + 2000, static_cast<int>(kWorldSeed), 7);
-        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
-        int surface = groundRow(x);
-        int y = surface + 200 + static_cast<int>((s >> 8) % 200u);
-        spawnCarver(x, y, static_cast<float>(s % 360u) * 0.0174533f, 3,
-                    200 + static_cast<int>((s >> 12) % 150u), s);
-    }
-
-    // Run the carvers.
-    size_t qi = 0;
-    while (qi < queue.size()) {
-        Carver c = queue[qi++];
-        for (int step = 0; step < c.life; ++step) {
-            for (int dy = -c.radius; dy <= c.radius; ++dy) {
-                for (int dx = -c.radius; dx <= c.radius; ++dx) {
-                    if (dx * dx + dy * dy > c.radius * c.radius) continue;
-                    int cx = static_cast<int>(std::lround(c.x)) + dx;
-                    int cy = static_cast<int>(std::lround(c.y)) + dy;
-                    if (cx < worldX0 || cx >= worldX1 || cy < 0 || cy >= height - 3) continue;
-                    int surf = groundRow(cx);
-                    if (cy < surf + 20) continue;
-                    if (world.at(cx, cy) == Mat::Water) continue;
-                    if (world.at(cx, cy + 1) == Mat::Water) continue;
-                    world.set(cx, cy, Mat::Air);
-                }
-            }
-            uint32_t h = hashBits(static_cast<int>(c.x), static_cast<int>(c.y), step + static_cast<int>(c.seed));
-            c.angle += (static_cast<float>(h & 0xFFFFu) / 65535.0f - 0.5f) * 0.4f;
-            c.x += std::cos(c.angle) * c.speed;
-            c.y += std::sin(c.angle) * c.speed;
-            // Branch occasionally in deep caverns.
-            if (c.y > 400.0f && (h & 0x3Fu) == 0u && queue.size() < 500) {
-                Carver child = c;
-                child.angle += 0.9f;
-                child.life = c.life / 2;
-                child.radius = std::max(2, c.radius - 1);
-                child.seed = h;
-                queue.push_back(child);
-            }
-            if (c.x < worldX0 || c.x >= worldX1 || c.y < 0 || c.y >= height - 10) break;
-        }
-    }
-
-    // Pass 4: Pocket pass (elliptical chambers).
-    const int numPockets = (chunkEnd - chunkStart + 1) * 3;
-    for (int i = 0; i < numPockets; ++i) {
-        uint32_t s = hashBits(i + 5000, static_cast<int>(kWorldSeed), 19);
-        int x = worldX0 + static_cast<int>(s % static_cast<uint32_t>(worldX1 - worldX0));
-        int surface = groundRow(x);
-        int cy = surface + 120 + static_cast<int>((s >> 8) % 300u);
-        if (cy > height - 100) cy = height - 100;
-        int rx = 6 + static_cast<int>((s >> 4) % 8u);
-        int ry = 4 + static_cast<int>((s >> 12) % 6u);
-        for (int dy = -ry; dy <= ry; ++dy) {
-            for (int dx = -rx; dx <= rx; ++dx) {
-                float nx = static_cast<float>(dx) / rx;
-                float ny = static_cast<float>(dy) / ry;
-                if (nx * nx + ny * ny > 1.0f) continue;
-                int px = x + dx;
-                int py = cy + dy;
-                if (px < worldX0 || px >= worldX1 || py < 0 || py >= height - 3) continue;
-                int surf = groundRow(px);
-                if (py < surf + 20) continue;
-                if (world.at(px, py) == Mat::Water) continue;
-                world.set(px, py, Mat::Air);
-            }
-        }
-    }
-
-    // Phase 3: Organic open caves via ridged noise (absolute value of 2D
-    // noise). Produces webbed/marble-like cavern networks. Threshold scales
-    // with depth: strict near the surface, wider deep underground.
-    for (int x = worldX0; x < worldX1; ++x) {
-        int surface = groundRow(x);
-        for (int y = surface + 30; y < height - 3; ++y) {
-            float depth = static_cast<float>(y - surface);
-            float belt = std::min(1.0f, std::max(0.0f, (depth - 40.0f) / 300.0f));
-            float thresh = 0.06f + belt * 0.12f;
-            float n = noise2(static_cast<float>(x) / 90.0f, static_cast<float>(y) / 90.0f, kWorldSeed + 700u);
-            float ridged = std::fabs(n - 0.5f) * 2.0f;  // 0..1, ridges at 0
-            // Actually use absolute value of centered noise:
-            float centered = noise2(static_cast<float>(x) / 90.0f, static_cast<float>(y) / 90.0f, kWorldSeed + 700u) * 2.0f - 1.0f;
-            float ridgedVal = std::fabs(centered);
-            if (ridgedVal < thresh) {
-                if (world.at(x, y) != Mat::Water && world.at(x, y + 1) != Mat::Water) {
-                    int surf = groundRow(x);
-                    if (y >= surf + 20) world.set(x, y, Mat::Air);
-                }
-            }
-        }
-    }
-    // Phase 3 done.
-
-    // Pass 5: Cellular automata smoothing — remove isolated air cells and
-    // floating scraps (a cell is removed if it has too few air neighbours).
-    // Run a few iterations.
-    for (int iter = 0; iter < 2; ++iter) {
-        std::vector<std::pair<int,int>> toFill;
+    // Step 2: Cellular automata pockets in upper underground.
+    {
+        int depthTop = 0; // placeholder
         for (int x = worldX0; x < worldX1; ++x) {
-            for (int y = 0; y < height - 3; ++y) {
-                if (world.at(x, y) != Mat::Air) continue;
-                int airNeigh = 0;
-                for (int dy = -1; dy <= 1; ++dy) {
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        if (dx == 0 && dy == 0) continue;
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
-                        if (world.at(nx, ny) == Mat::Air) ++airNeigh;
-                    }
-                }
-                // Isolated cell or tiny pocket: fill it back in.
-                if (airNeigh <= 1) toFill.emplace_back(x, y);
+            int surface = groundRow(x);
+            int top = surface + 20;
+            int bot = surface + 120;
+            if (bot > height - 50) bot = height - 50;
+            // Initialize with noise threshold ~45% air.
+            for (int y = top; y < bot; ++y) {
+                float n = noise2(static_cast<float>(x)/40.0f, static_cast<float>(y)/40.0f, kWorldSeed + 500u);
+                if (n > 0.55f) world.set(x, y, Mat::Air);
             }
         }
-        for (auto& p : toFill) world.set(p.first, p.second, Mat::Stone);
+        // Smooth 4 iterations.
+        for (int iter = 0; iter < 0; ++iter) {
+            std::vector<std::pair<int,int>> changes;
+            for (int x = worldX0; x < worldX1; ++x) {
+                for (int y = 0; y < height - 3; ++y) {
+                    int surf = groundRow(x);
+                    if (y < surf + 20 || y > surf + 120) continue;
+                    int airNeigh = 0;
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            if (dx==0 && dy==0) continue;
+                            int nx=x+dx, ny=y+dy;
+                            if (nx<worldX0||nx>=worldX1||ny<0||ny>=height-3) continue;
+                            if (world.at(nx,ny)==Mat::Air) ++airNeigh;
+                        }
+                    Mat cur = world.at(x,y);
+                    if (cur == Mat::Air && airNeigh < 4) changes.emplace_back(x,y);
+                    if (cur != Mat::Air && cur != Mat::Water && airNeigh >= 5) changes.emplace_back(x,y);
+                }
+            }
+            for (auto&p : changes) {
+                if (world.at(p.first,p.second)==Mat::Air) world.set(p.first,p.second,Mat::Stone);
+                else world.set(p.first,p.second,Mat::Air);
+            }
+        }
+    }
+
+    // Step 3: Worm carvers (drunkard walk) for long tunnels.
+    struct Carver { float x,y,angle,speed; int radius,life; uint32_t seed; };
+    std::vector<Carver> queue;
+    const int numWorms = (chunkEnd-chunkStart+1) * 6;
+    for (int i=0;i<numWorms;++i){
+        uint32_t s=hashBits(i+3000,static_cast<int>(kWorldSeed),7);
+        int x=worldX0+static_cast<int>(s % static_cast<uint32_t>(worldX1-worldX0));
+        int surf=groundRow(x);
+        int y=surf+80+static_cast<int>((s>>8)%120u);
+        if (y>height-200) y=height-200;
+        Carver c; c.x=x; c.y=y; c.angle=static_cast<float>(s%360u)*0.0174533f;
+        c.speed=1.0f; c.radius=2+static_cast<int>((s>>4)%3u);
+        c.life=150+static_cast<int>((s>>12)%150u); c.seed=s;
+        queue.push_back(c);
+    }
+    // Surface entrances
+    const int numShafts=(chunkEnd-chunkStart+1)*2;
+    for (int i=0;i<numShafts;++i){
+        uint32_t s=hashBits(i+7000,static_cast<int>(kWorldSeed),13);
+        int x=worldX0+static_cast<int>(s % static_cast<uint32_t>(worldX1-worldX0));
+        int surf=groundRow(x);
+        Carver c; c.x=x; c.y=surf+22; c.angle=1.5708f; c.speed=1.0f; c.radius=2;
+        c.life=40+static_cast<int>((s>>8)%30u); c.seed=s;
+        queue.push_back(c);
+    }
+    size_t qi=0;
+    while(qi<queue.size()){
+        Carver c=queue[qi++];
+        for(int step=0;step<c.life;++step){
+            for(int dy=-c.radius;dy<=c.radius;++dy)
+                for(int dx=-c.radius;dx<=c.radius;++dx){
+                    if(dx*dx+dy*dy>c.radius*c.radius) continue;
+                    int cx=static_cast<int>(std::lround(c.x))+dx;
+                    int cy=static_cast<int>(std::lround(c.y))+dy;
+                    if(cx<worldX0||cx>=worldX1||cy<0||cy>=height-3) continue;
+                    int surf=groundRow(cx);
+                    if(cy<surf+20) continue;
+                    if(world.at(cx,cy)==Mat::Water) continue;
+                    world.set(cx,cy,Mat::Air);
+                }
+            uint32_t h=hashBits(static_cast<int>(c.x),static_cast<int>(c.y),step+static_cast<int>(c.seed));
+            c.angle+=(static_cast<float>(h&0xFFFFu)/65535.0f-0.5f)*0.4f;
+            c.x+=std::cos(c.angle)*c.speed;
+            c.y+=std::sin(c.angle)*c.speed;
+            if(c.x<worldX0||c.x>=worldX1||c.y<0||c.y>=height-10) break;
+        }
+    }
+
+    // Step 4: Simplex noise masks for large open caverns (deep).
+    for (int x=worldX0;x<worldX1;++x){
+        int surf=groundRow(x);
+        for (int y=surf+200;y<height-3;++y){
+            float n=noise2(static_cast<float>(x)/60.0f,static_cast<float>(y)/60.0f,kWorldSeed+800u);
+            if (n>0.72f) {
+                if (world.at(x,y)!=Mat::Water && world.at(x,y+1)!=Mat::Water) world.set(x,y,Mat::Air);
+            }
+        }
+    }
+
+    // Step 5: Liquid placement (U-basins in lower regions).
+    // Liquid placement: fill U-basins in lower regions with water.
+    for (int x=worldX0;x<worldX1;++x){
+        for (int y=height-200;y<height-10;++y){
+            if (world.at(x,y)!=Mat::Air) continue;
+            // if cell below is solid and sides solid -> pocket
+            if (y+1>=height-3) continue;
+            if (world.at(x,y+1)!=Mat::Air && world.at(x,y+1)!=Mat::Water) {
+                // check left/right walls
+                bool leftWall = (x>worldX0 && world.at(x-1,y)!=Mat::Air);
+                bool rightWall = (x+1<worldX1 && world.at(x+1,y)!=Mat::Air);
+                if (leftWall && rightWall) world.set(x,y,Mat::Water);
+            }
+        }
     }
 }
 

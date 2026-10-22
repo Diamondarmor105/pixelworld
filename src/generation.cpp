@@ -449,47 +449,6 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
     const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
     const int height = world.height();
 
-    // Step 2: Cellular automata pockets in upper underground.
-    {
-        int depthTop = 0; // placeholder
-        for (int x = worldX0; x < worldX1; ++x) {
-            int surface = groundRow(x);
-            int top = surface + 20;
-            int bot = surface + 120;
-            if (bot > height - 50) bot = height - 50;
-            // Initialize with noise threshold ~45% air.
-            for (int y = top; y < bot; ++y) {
-                float n = noise2(static_cast<float>(x)/40.0f, static_cast<float>(y)/40.0f, kWorldSeed + 500u);
-                if (n > 0.55f) world.set(x, y, Mat::Air);
-            }
-        }
-        // Smooth 4 iterations.
-        for (int iter = 0; iter < 0; ++iter) {
-            std::vector<std::pair<int,int>> changes;
-            for (int x = worldX0; x < worldX1; ++x) {
-                for (int y = 0; y < height - 3; ++y) {
-                    int surf = groundRow(x);
-                    if (y < surf + 20 || y > surf + 120) continue;
-                    int airNeigh = 0;
-                    for (int dy = -1; dy <= 1; ++dy)
-                        for (int dx = -1; dx <= 1; ++dx) {
-                            if (dx==0 && dy==0) continue;
-                            int nx=x+dx, ny=y+dy;
-                            if (nx<worldX0||nx>=worldX1||ny<0||ny>=height-3) continue;
-                            if (world.at(nx,ny)==Mat::Air) ++airNeigh;
-                        }
-                    Mat cur = world.at(x,y);
-                    if (cur == Mat::Air && airNeigh < 4) changes.emplace_back(x,y);
-                    if (cur != Mat::Air && cur != Mat::Water && airNeigh >= 5) changes.emplace_back(x,y);
-                }
-            }
-            for (auto&p : changes) {
-                if (world.at(p.first,p.second)==Mat::Air) world.set(p.first,p.second,Mat::Stone);
-                else world.set(p.first,p.second,Mat::Air);
-            }
-        }
-    }
-
     // Step 4: Simplex noise masks for large open caverns (deep).
     for (int x=worldX0;x<worldX1;++x){
         int surf=groundRow(x);

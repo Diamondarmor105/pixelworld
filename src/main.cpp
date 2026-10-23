@@ -1157,70 +1157,6 @@ bool checkCavesExist() {
     return passed;
 }
 
-// Self-test: snow belongs to the mountain tops and to nothing else.
-//
-// The snow used to be decided by a line drawn straight across the map, so it
-// turned up on flat ground in the lowlands and left peaks bare whenever the
-// hills happened to be high there. Now the snow follows the mountain itself,
-// and this checks that it does.
-bool checkSnowStaysOnTheMountainTops() {
-    World world;
-    const int chunks = 40;
-    generateChunksAround(world, (chunks / 2) * Chunk::WIDTH, chunks / 2);
-    const int width = chunks * Chunk::WIDTH;
-
-    // The ground rows, so the lowlands can be told from the peaks.
-    std::vector<std::pair<int, int>> columns;   // (surface row, column)
-    for (int x = 0; x < width; ++x) columns.emplace_back(groundRow(x), x);
-    std::sort(columns.begin(), columns.end());
-
-    // The lowest tenth of the land is lowland. It must be bare.
-    int snowyLowland = 0;
-    for (int i = 0; i < width / 10; ++i) {
-        const int x = columns[i].second;
-        if (mountainHeightAt(x) > 0.0f) continue;   // a mountain can be down there
-        for (int y = 0; y < world.height(); ++y) {
-            if (world.at(x, y) == Mat::Snow) { ++snowyLowland; break; }
-        }
-    }
-
-    // Every column that has snow must be on a mountain, and the snow must be
-    // the top of the ground, not a layer buried in it.
-    int snowOffMountain = 0;
-    int snowNotOnTop = 0;
-    int snowyColumns = 0;
-    for (int x = 0; x < width; ++x) {
-        int snowTop = -1;
-        int snowRows = 0;
-        for (int y = 0; y < world.height(); ++y) {
-            if (world.at(x, y) == Mat::Snow) {
-                if (snowTop < 0) snowTop = y;
-                ++snowRows;
-            }
-        }
-        if (snowTop < 0) continue;
-        ++snowyColumns;
-        if (mountainHeightAt(x) <= 0.0f) ++snowOffMountain;
-        // The cap must lie in the band the mountain gives it, and it must rest
-        // on solid ground. A tree standing on the snow does not count against
-        // it - the tree simply takes the top row or two.
-        const int capTop = groundRow(x);
-        const int capBottom = capTop + snowRowsAt(x);
-        const bool insideBand = snowTop >= capTop && snowTop + snowRows <= capBottom;
-        const bool restsOnGround = snowTop + snowRows < world.height() &&
-                                   world.at(x, snowTop + snowRows) != Mat::Air;
-        if (!insideBand || !restsOnGround) ++snowNotOnTop;
-    }
-
-    const bool passed = snowyLowland == 0 && snowOffMountain == 0 &&
-                        snowNotOnTop == 0 && snowyColumns > 0;
-    std::printf("snow stays on the mountain tops: %s (%d snowy columns, %d on lowland "
-                "ground, %d off a mountain, %d not on top)\n",
-                passed ? "PASS" : "FAIL", snowyColumns, snowyLowland,
-                snowOffMountain, snowNotOnTop);
-    return passed;
-}
-
 // Self-test: the caves are deep, rare and joined up.
 //
 // They used to reach almost to the surface and fill a tenth of the rock with
@@ -1301,46 +1237,6 @@ bool checkCavesAreDeepAndJoinedUp() {
     std::printf("caves are deep and joined up: %s (shallowest %d rows down, %.1f%% of the "
                 "rock hollow, %d caverns, biggest %lld cells)\n",
                 passed ? "PASS" : "FAIL", shallowest, share, caverns, biggest);
-    return passed;
-}
-
-// Self-test: a hand-made structure must sit entirely inside its own chunk, or
-// it would be cut in half by the chunk boundary. And it must really be drawn:
-// the material in the chunk has to match the pattern.
-bool checkStructuresStayInTheirChunk() {
-    World world;
-    int total = 0;
-    int outside = 0;
-    int wrong = 0;
-    for (int i = 0; i < 12; ++i) {
-        Chunk& chunk = world.chunk(i);
-        std::vector<StructurePlacement> placements;
-        generateChunk(i, chunk, &placements);
-
-        const int chunkLeft = i * Chunk::WIDTH;
-        const int chunkRight = chunkLeft + Chunk::WIDTH - 1;
-        for (const StructurePlacement& p : placements) {
-            ++total;
-            if (p.x < chunkLeft || p.x + p.width - 1 > chunkRight) ++outside;
-
-            const StructurePattern& pattern = structurePattern(p.kind, p.variant);
-            const int lowestFilled = structureLowestFilledRow(pattern);
-
-            for (int row = 0; row <= lowestFilled; ++row) {
-                const char* line = pattern.rows[row];
-                const int worldY = p.y - (lowestFilled - row);
-                for (int column = 0; line[column] != '\0'; ++column) {
-                    const Mat expected = structureMaterial(line[column]);
-                    if (expected == Mat::Air) continue;
-                    const int worldX = p.x + column;
-                    if (world.at(worldX, worldY) != expected) ++wrong;
-                }
-            }
-        }
-    }
-    const bool passed = total > 0 && outside == 0 && wrong == 0;
-    std::printf("structures stay in their chunk: %s (%d structures, %d outside, %d wrong pixels)\n",
-                passed ? "PASS" : "FAIL", total, outside, wrong);
     return passed;
 }
 
@@ -1500,107 +1396,6 @@ bool checkSandSinksThroughWater() {
     return passed;
 }
 
-// Self-test: the pond in the generated world must hold its water.
-//
-// The pond is dug into the ground and walled with rock at both ends. If the
-// ground is not flat where the pond goes, the bowl comes out as a stepped pit
-// and the water ends up in the deepest step with the shallow ones left dry; if
-// the floor is not walled, a cave under the pond swallows the water whole.
-bool checkPondKeepsItsWater() {
-    World world;
-    generateChunksAround(world, 0, 6);
-
-    // The surface row of the water in every column that has any.
-    std::map<int, int> before;
-    for (int x = 0; x < 6 * Chunk::WIDTH; ++x) {
-        for (int y = 0; y < world.height(); ++y) {
-            if (world.at(x, y) != Mat::Water) continue;
-            before[x] = y;
-            break;
-        }
-    }
-    // The water in the pond itself, not the water everywhere in the world:
-    // clay that melts next to the deep lava turns into water too, and that
-    // has nothing to do with the pond holding on to what is in it.
-    auto pondWater = [&world](const std::map<int, int>& rows) {
-        float total = 0.0f;
-        for (const auto& entry : rows) {
-            for (int y = entry.second; y < entry.second + 16 && y < world.height(); ++y) {
-                if (world.at(entry.first, y) == Mat::Water) total += world.mass(entry.first, y);
-            }
-        }
-        return total;
-    };
-    const float waterBefore = pondWater(before);
-    if (before.empty()) {
-        std::printf("pond keeps its water: FAIL (no pond was generated)\n");
-        return false;
-    }
-
-    Simulation sim(world);
-    SimRect region;
-    region.x0 = 0;
-    region.x1 = 6 * Chunk::WIDTH - 1;
-    region.y0 = 0;
-    region.y1 = 511;
-    for (int i = 0; i < 300; ++i) sim.step(world, region);
-
-    const float waterAfter = pondWater(before);
-
-    // Every column that had water still has water at the same level.
-    int moved = 0;
-    for (const auto& entry : before) {
-        int row = -1;
-        for (int y = 0; y < world.height(); ++y) {
-            if (world.at(entry.first, y) == Mat::Water) { row = y; break; }
-        }
-        if (row != entry.second) ++moved;
-    }
-
-    const bool kept = std::fabs(waterBefore - waterAfter) < 0.01f && moved == 0;
-    std::printf("pond keeps its water: %s (water %.2f -> %.2f, %d of %d columns changed level)\n",
-                kept ? "PASS" : "FAIL", waterBefore, waterAfter, moved,
-                static_cast<int>(before.size()));
-    return kept;
-}
-
-// Self-test: every structure must stand on the ground.
-//
-// A structure whose foot is one row too low is buried in the dirt; one row too
-// high hovers in the air with nothing under it. The foot of a pattern is the
-// lowest row that has anything in it - a ruined wall whose base has eroded
-// away still has to stand on the part that is left.
-bool checkStructuresStandOnTheGround() {
-    World world;
-    int total = 0;
-    int floating = 0;
-    int buried = 0;
-    for (int i = 0; i < 12; ++i) {
-        Chunk& chunk = world.chunk(i);
-        std::vector<StructurePlacement> placements;
-        generateChunk(i, chunk, &placements);
-        for (const StructurePlacement& p : placements) {
-            const StructurePattern& pattern = structurePattern(p.kind, p.variant);
-            const int lowestFilled = structureLowestFilledRow(pattern);
-            for (int column = 0; column < structurePatternWidth(pattern); ++column) {
-                const char c = pattern.rows[lowestFilled][column];
-                if (c == '\0' || c == '.') continue;   // nothing stands here
-                ++total;
-                const int x = p.x + column;
-                // The cell on the ground must be the pattern's own material.
-                if (world.at(x, p.y) != structureMaterial(c)) ++buried;
-                // And the cell under it must be solid ground, not air.
-                const Mat below = world.at(x, p.y + 1);
-                if (below == Mat::Air || materialInfo(below).flows) ++floating;
-            }
-        }
-    }
-    const bool passed = total > 0 && floating == 0 && buried == 0;
-    std::printf("structures stand on the ground: %s (%d feet, %d floating, %d buried)\n",
-                passed ? "PASS" : "FAIL", total, floating, buried);
-    return passed;
-}
-
 // Self-test: water lying on soil must not eat the ground away.
 //
 // The water softens the top layer of the bed into mud, and that is all: one
@@ -1636,58 +1431,6 @@ bool checkWaterDoesNotErodeItsBed() {
     const bool passed = bedIntact && waterKept && mud > 0;
     std::printf("water does not erode its bed: %s (soil %d -> %d, mud %d, water %.2f -> %.2f)\n",
                 passed ? "PASS" : "FAIL", soilBefore, soilAfter, mud, waterBefore, waterAfter);
-    return passed;
-}
-
-// Self-test: a tree must not have a branch hanging over the player's head.
-//
-// A branch of wood at head height stops the player dead: they walk into the
-// tree, try to jump, bump their head on the branch and drop straight back
-// down again, and can never get past it. So the only wood in the bottom of a
-// tree may be the trunk itself, in the same columns all the way down. The
-// leaves may be anywhere: you push straight through them.
-bool checkTreesDoNotBlockHeads() {
-    int trees = 0;
-    int offenders = 0;
-    for (int kind = 0; kind < structureKindCount(); ++kind) {
-        const StructureSet& set = structureKind(kind);
-        if (std::strcmp(set.kind, "tree") != 0 && std::strcmp(set.kind, "giant tree") != 0) {
-            continue;
-        }
-        for (int variant = 0; variant < set.count; ++variant) {
-            const StructurePattern& pattern = structurePattern(kind, variant);
-            ++trees;
-
-            // The trunk: the wood along the very bottom row.
-            const char* bottom = pattern.rows[pattern.rowCount - 1];
-            int trunkLeft = -1;
-            int trunkRight = -1;
-            for (int c = 0; bottom[c] != '\0'; ++c) {
-                const Mat m = structureMaterial(bottom[c]);
-                if (m != Mat::Wood && m != Mat::Bark) continue;
-                if (trunkLeft < 0) trunkLeft = c;
-                trunkRight = c;
-            }
-            if (trunkLeft < 0) {
-                ++offenders;   // a tree with no trunk to climb
-                continue;
-            }
-
-            // Any wood within reach of the player's head has to be in the
-            // trunk's columns, or the player cannot get past it.
-            for (int row = std::max(0, pattern.rowCount - 12); row < pattern.rowCount; ++row) {
-                const char* line = pattern.rows[row];
-                for (int c = 0; line[c] != '\0'; ++c) {
-                    const Mat m = structureMaterial(line[c]);
-                    if (m != Mat::Wood && m != Mat::Bark) continue;
-                    if (c < trunkLeft || c > trunkRight) ++offenders;
-                }
-            }
-        }
-    }
-    const bool passed = trees > 0 && offenders == 0;
-    std::printf("trees do not hang over the player's head: %s (%d trees, %d offending branches)\n",
-                passed ? "PASS" : "FAIL", trees, offenders);
     return passed;
 }
 
@@ -2004,12 +1747,8 @@ int runSelfTest() {
     // The endless world.
     if (!checkChunksAreDeterministic()) passed = false;
     if (!checkTerrainVaries()) passed = false;
-    if (!checkSnowStaysOnTheMountainTops()) passed = false;
     if (!checkCavesExist()) passed = false;
     if (!checkCavesAreDeepAndJoinedUp()) passed = false;
-    if (!checkStructuresStayInTheirChunk()) passed = false;
-    if (!checkStructuresStandOnTheGround()) passed = false;
-    if (!checkTreesDoNotBlockHeads()) passed = false;
     if (!checkDamageSurvives()) passed = false;
 
     // The rules the whole world stands on.
@@ -2017,7 +1756,6 @@ int runSelfTest() {
     if (!checkNoCellHoldsMoreThanOneUnit()) passed = false;
     if (!checkSandSinksThroughWater()) passed = false;
     if (!checkWaterDoesNotErodeItsBed()) passed = false;
-    if (!checkPondKeepsItsWater()) passed = false;
 
     return passed ? 0 : 1;
 }

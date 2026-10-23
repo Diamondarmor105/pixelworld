@@ -8,8 +8,6 @@
 #include <cmath>
 #include <vector>
 
-void carveChunkArches(World& world, int chunk);
-
 namespace {
 
 // The seed of the whole world. One number decides everything: where the hills
@@ -651,10 +649,7 @@ void carveChunkCaves(World& world, int chunk) {
 // arches agree across chunk borders.
 void carveCaves(World& world, int chunkStart, int chunkEnd) {
     for (int chunk = chunkStart; chunk <= chunkEnd; ++chunk) {
-        if (world.hasChunk(chunk)) {
-            carveChunkCaves(world, chunk);
-            carveChunkArches(world, chunk);
-        }
+        if (world.hasChunk(chunk)) carveChunkCaves(world, chunk);
     }
 }
 
@@ -1010,162 +1005,26 @@ static Land landAt(int worldX) {
 
     Land land;
 
-    // The shape of the ground, and the rubble that has slid down it.
+    // The surface is the height curve itself: no rubble, no snow cap, no
+    // steep-face or hollow rules. What it is made of depends only on the
+    // climate of the province it is in.
     const int profile = profileAt(worldX);
-    land.screeRows = screeRowsAt(worldX);
-
-    // The climate of the country this column is in.
     const float temp = climateTemperature(worldX);
-    const float moist = climateMoisture(worldX, profile);
 
-    // How high this column is. High ground is colder and thinner than the
-    // country around it, and the soil does not reach up a mountain: what is
-    // on a mountain is rock and rubble, whatever the weather is doing in the
-    // valley below.
-    const float mountain = mountainHeightAt(worldX);
-    const bool high = mountain > 0.08f;
-
-    // How deep the soil and the packed dirt go under the surface.
-    //
-    // These wander from column to column instead of stepping. A depth that
-    // changes every few columns draws a staircase across the world, and a
-    // staircase is the surest sign that a machine made something.
-    //
-    // On a mountain the soil is thin, and the rock comes up close under the
-    // turf: a mountain with forty rows of dirt under it is a lump of earth
-    // with a bump on top, not a mountain.
-    const float soil = noise1(x / 38.0f, kWorldSeed + 61u);
-    const float dirt = noise1(x / 74.0f, kWorldSeed + 62u);
-    land.soilRows = 1 + static_cast<int>(soil * 3.0f);
-    land.dirtRows = high ? 1 + static_cast<int>(dirt * 5.0f)
-                         : 12 + static_cast<int>(dirt * 26.0f);
-
-    // How steep the ground is here: rows of fall per column, measured over a
-    // few columns either side so one step does not count as a cliff.
-    const float slope = std::fabs(static_cast<float>(profileAt(worldX + 4) - profileAt(worldX - 4))) / 8.0f;
-    // Flat ground in a low valley collects deeper soil: the rain brings silt
-    // down and it settles. Both measures change smoothly, so the soil depth
-    // does not step from column to column.
-    const float flat = 1.0f - std::min(1.0f, std::max(0.0f, (slope - 0.2f) / 0.5f));
-    const float low = std::min(1.0f, std::max(0.0f, (static_cast<float>(profile) - 300.0f) / 80.0f));
-    if (!high) {
-        land.soilRows += static_cast<int>(std::lround(flat * low * 4.0f));
-        land.dirtRows += static_cast<int>(std::lround(flat * low * 14.0f));
-    }
-
-    // Curvature: is this column on a crest (higher than the ground either
-    // side of it) or in a hollow (lower than both)? Rows grow downward, so a
-    // crest has a smaller row than the average of its neighbours.
-    const float curve = (static_cast<float>(profileAt(worldX - 4) + profileAt(worldX + 4)) * 0.5f) -
-                        static_cast<float>(profile);
-    // A crest sheds its soil: rain and wind strip the top, so the rock shows.
-    // A hollow collects what washes down from the slopes around it.
-    if (!high && curve > 0.8f) land.soilRows = 1;
-    if (!high && curve < -0.8f) {
-        land.soilRows += 3;
-        land.dirtRows += 6;
-    }
-
-    // What the ground surface is made of.
-    //
-    // A hot dry country is sand. A wet one is mud. A warm damp one is clay.
-    // A cold one is frozen ground. A mountain is bare rock. Everything else
-    // is ordinary soil.
-    if (high) {
-        land.topMat = Mat::Stone;
-        land.screeMat = Mat::Gravel;
-    } else if (!high && curve > 0.8f && slope > 0.25f) {
-        // A bare ridge with some slope to it: the crest shows rock.
-        land.topMat = Mat::Stone;
-        land.screeMat = Mat::Gravel;
-    } else if (slope > 0.9f) {
-        // A steep face has no soil on it: the weather strips it to rock and
-        // the loose rock slides down to the foot, whatever the climate is.
-        land.topMat = Mat::Stone;
-        land.screeMat = Mat::Gravel;
-        land.soilRows = 1;
-    } else if (temp > 0.55f && moist > 0.70f) {
-        land.topMat = Mat::Mycelium;
-        land.screeMat = Mat::Gravel;
-    } else if (temp > 0.58f && moist < 0.36f) {
-        land.topMat = Mat::Sand;
-        land.screeMat = Mat::Sand;
-    } else if (moist > 0.64f) {
-        land.topMat = Mat::Mud;
-        land.screeMat = Mat::Gravel;
-    } else if (temp > 0.52f && moist > 0.52f) {
-        land.topMat = Mat::Clay;
-        land.screeMat = Mat::Gravel;
-    } else if (temp < 0.28f) {
-        land.topMat = Mat::PackedDirt;
-        land.screeMat = Mat::Gravel;
-    } else {
-        land.topMat = Mat::Soil;
-        land.screeMat = Mat::Gravel;
-    }
-
-    // Snow belongs to the mountain tops and to nothing else.
-    //
-    // It is decided by the mountain itself and by how cold the country is,
-    // not by a line drawn across the map. A fixed line puts snow on a hill
-    // in the lowlands whenever the ground happens to reach it, and leaves a
-    // bare peak whenever the hills happen to be high there - which is exactly
-    // how snow ended up all over the surface instead of up on the mountains.
-    const float cold = 1.0f - temp;
-    const float line = 0.42f - cold * 0.22f;   // the height the snow starts at
-    const float m = mountain - line;
-    if (m > 0.48f) land.snowRows = 5;
-    else if (m > 0.38f) land.snowRows = 4;
-    else if (m > 0.26f) land.snowRows = 3;
-    else if (m > 0.13f) land.snowRows = 2;
-    else if (m > 0.0f) land.snowRows = 1;
-    else land.snowRows = 0;
-
-    // The edge of the snow is ragged, not a clean line. The depth of the
-    // cover wanders by a row or two, so the last of the snow melts away in
-    // patches instead of stopping dead along a boundary.
-    if (land.snowRows > 0) {
-        const float fray = noise1(x / 13.0f, kWorldSeed + 63u);
-        if (fray < 0.34f) --land.snowRows;
-        else if (fray > 0.72f) ++land.snowRows;
-    }
-
-    // The ground itself starts under the snow and the rubble.
     land.profile = profile;
-    land.surface = profile - land.screeRows - land.snowRows;
+    land.surface = profile;
+    land.screeRows = 0;
+    land.snowRows = 0;
+
+    land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
+    land.dirtRows = 12 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f);
+
+    // Cold country is snow, hot country is sand, everything else is dirt.
+    if (temp < 0.30f) land.topMat = Mat::Snow;
+    else if (temp > 0.60f) land.topMat = Mat::Sand;
+    else land.topMat = Mat::Soil;
+    land.screeMat = land.topMat;
     return land;
-}
-
-static float columnSlope(int x) {
-    return std::fabs(static_cast<float>(profileAt(x + 4) - profileAt(x - 4))) / 8.0f;
-}
-
-void carveChunkArches(World& world, int chunk) {
-    constexpr int kSpacing = 64;
-    constexpr int kReach = 24;
-    const int height = world.height();
-    const int ownX0 = chunk * Chunk::WIDTH;
-    const int ownX1 = ownX0 + Chunk::WIDTH;
-    for (int gx = (ownX0 - kReach) / kSpacing - 1; gx <= (ownX1 + kReach) / kSpacing + 1; ++gx) {
-        const float jitter = hash01(gx, 0, static_cast<int>(kWorldSeed) + 1900);
-        if (hash01(gx, 1, static_cast<int>(kWorldSeed) + 1901) > 0.35f) continue;
-        const int cx = gx * kSpacing + static_cast<int>(jitter * kSpacing);
-        if (columnSlope(cx) < 0.6f) continue;
-        const int cy = profileAt(cx) + 18;
-        const float rx = 10.0f + 6.0f * hash01(gx, 2, static_cast<int>(kWorldSeed) + 1902);
-        const float ry = 3.0f + 1.0f * hash01(gx, 3, static_cast<int>(kWorldSeed) + 1903);
-        for (int y = cy - 5; y <= cy + 5; ++y) {
-            if (y < 0 || y >= height - 3) continue;
-            for (int x = static_cast<int>(cx - rx) - 1; x <= static_cast<int>(cx + rx) + 1; ++x) {
-                if (x < ownX0 || x >= ownX1) continue;
-                const float dx = (x - cx) / rx, dy = (y - cy) / ry;
-                if (dx * dx + dy * dy > 1.0f) continue;
-                if (y < profileAt(x) + 12) continue;
-                if (world.at(x, y) == Mat::Water) continue;
-                world.set(x, y, Mat::Air);
-            }
-        }
-    }
 }
 
 // -- The endless world ------------------------------------------------------
@@ -1260,90 +1119,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
                 chunk.cells[cell] = static_cast<uint8_t>(m);
                 chunk.mass[cell] = 1.0f;
             }
-        }
-    }
-
-    // 4. A pond on the surface, filling a natural basin.
-    //
-    //    Water is level, so the water surface sits at the height of the
-    //    lowest rim of the basin. The basin is found the way a real lake is
-    //    found: a low point in the ground with higher ground on both sides.
-    //    Every cell of ground below that level is filled, and a sandy shore
-    //    is left where the water meets the land.
-    int pondLeft = 0;
-    int pondRight = -1;
-    {
-        // Find the deepest natural basin in this chunk.
-        int bestLowX = -1;
-        int bestDepth = 0;
-        for (int cx = 12; cx < Chunk::WIDTH - 12; ++cx) {
-            const int half = 22;
-            const int spanLeft = std::max(0, cx - half);
-            const int spanRight = std::min(Chunk::WIDTH - 1, cx + half);
-            int lowX = spanLeft;
-            for (int l = spanLeft + 1; l <= spanRight; ++l)
-                if (groundRow(baseX + l) > groundRow(baseX + lowX)) lowX = l;
-            int rimLeft = groundRow(baseX + spanLeft);
-            int rimRight = groundRow(baseX + spanRight);
-            for (int l = lowX - 1; l >= spanLeft; --l) rimLeft = std::min(rimLeft, groundRow(baseX + l));
-            for (int l = lowX + 1; l <= spanRight; ++l) rimRight = std::min(rimRight, groundRow(baseX + l));
-            const int spill = std::max(rimLeft, rimRight);
-            const int bottom = groundRow(baseX + lowX);
-            const int depth = bottom - spill;
-            if (depth > bestDepth) { bestDepth = depth; bestLowX = lowX; }
-        }
-
-        if (bestLowX >= 0 && bestDepth >= 4) {
-            const int lx = bestLowX;
-            const int half = 22;
-            const int spanLeft = std::max(0, lx - half);
-            const int spanRight = std::min(Chunk::WIDTH - 1, lx + half);
-            int rimLeft = groundRow(baseX + spanLeft);
-            int rimRight = groundRow(baseX + spanRight);
-            for (int l = lx - 1; l >= spanLeft; --l) rimLeft = std::min(rimLeft, groundRow(baseX + l));
-            for (int l = lx + 1; l <= spanRight; ++l) rimRight = std::min(rimRight, groundRow(baseX + l));
-            const int spill = std::max(rimLeft, rimRight);
-            const int waterTop = spill;
-            const Mat shoreMat = (climateTemperature(baseX + lx) > 0.5f) ? Mat::Sand : Mat::Clay;
-
-            for (int l = spanLeft; l <= spanRight; ++l) {
-                const int g = groundRow(baseX + l);
-                if (g < waterTop) continue;
-                const float t = static_cast<float>(l - lx) / static_cast<float>(half);
-                const int extra = static_cast<int>((1.0f - t * t) * 5.0f);
-                const int floor = g + extra;
-                const int digFrom = std::max(g, waterTop);
-                for (int y = digFrom; y < floor; ++y) {
-                    if (y < 0 || y >= height) continue;
-                    const size_t cell = chunk.index(l, y);
-                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Air);
-                    chunk.mass[cell] = 0.0f;
-                }
-                for (int y = waterTop; y < floor; ++y) {
-                    if (y < 0 || y >= height) continue;
-                    const size_t cell = chunk.index(l, y);
-                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Water);
-                    chunk.mass[cell] = 1.0f;
-                }
-                for (int y = floor; y < floor + 3; ++y) {
-                    if (y < 0 || y >= height) continue;
-                    const size_t cell = chunk.index(l, y);
-                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
-                    chunk.mass[cell] = 0.0f;
-                }
-            }
-            // Shoreline sediment.
-            for (int l = spanLeft; l <= spanRight; ++l) {
-                const int g = groundRow(baseX + l);
-                if (g < waterTop) continue;
-                for (int y = g; y < std::min(g + 2, height - 3); ++y) {
-                    const size_t cell = chunk.index(l, y);
-                    chunk.cells[cell] = static_cast<uint8_t>(shoreMat);
-                    chunk.mass[cell] = 0.0f;
-                }
-            }
-            pondLeft = spanLeft;
-            pondRight = spanRight;
         }
     }
 
@@ -1447,64 +1222,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
-    // 6. The hand-made things that stand on the ground: a ruined wall, a tree,
-    //    a bush, a pile of bones. Each chunk's own recipe decides which ones
-    //    and where, and each one is kept inside the chunk so no seam appears.
-    struct Footprint {
-        int left;
-        int right;
-    };
-    std::vector<Footprint> footprints;
-
-    for (int i = 0; i < 3; ++i) {
-        const int kind = static_cast<int>(hash01(index, i, 121) * structureKindCount()) %
-                         structureKindCount();
-        const int variant = static_cast<int>(hash01(index, i, 122) * 8.0f);
-        const StructurePattern& pattern = structurePattern(kind, variant);
-        const int patternWidth = structurePatternWidth(pattern);
-        const int patternHeight = pattern.rowCount;
-        if (patternWidth <= 0 || patternWidth >= Chunk::WIDTH - 12) continue;
-
-        const int room = Chunk::WIDTH - 12 - patternWidth;
-        const int lx = 6 + static_cast<int>(hash01(index, i, 123) * static_cast<float>(room));
-
-        // Keep clear of the pond, so nothing is left standing in the water.
-        if (pondRight >= pondLeft && lx + patternWidth - 1 >= pondLeft && lx <= pondRight) {
-            continue;
-        }
-
-        // Keep clear of the other structures, so one does not grow out of
-        // another.
-        bool clashes = false;
-        for (const Footprint& f : footprints) {
-            if (lx + patternWidth - 1 >= f.left && lx <= f.right) clashes = true;
-        }
-        if (clashes) continue;
-
-        // The structure stands on the ground: its foot goes on the lowest
-        // ground underneath it, so it is never left hanging in the air, and
-        // the row above that, so it is not buried in the dirt either.
-        int base = 0;
-        for (int dx = 0; dx < patternWidth; ++dx) {
-            base = std::max(base, groundRow(baseX + lx + dx));
-        }
-        base = std::min(base, height - patternHeight - 1);
-        if (base < patternHeight) continue;
-
-        drawPattern(chunk, pattern, lx, base - 1);
-        footprints.push_back({lx, lx + patternWidth - 1});
-
-        if (placements) {
-            StructurePlacement placement;
-            placement.x = baseX + lx;
-            placement.y = base - 1;
-            placement.width = patternWidth;
-            placement.height = patternHeight;
-            placement.kind = kind;
-            placement.variant = variant;
-            placements->push_back(placement);
-        }
-    }
 }
 
 void generateChunksAround(World& world, int worldX, int radius) {

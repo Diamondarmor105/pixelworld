@@ -532,7 +532,7 @@ constexpr float kCaveWarp = 40.0f;
 
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
-    constexpr int kMinHole = 80;
+    constexpr int kMinHole = 120;
     const int height = world.height();
     const int ownX0 = chunk * Chunk::WIDTH;
     const int winX0 = ownX0 - kMargin;
@@ -557,11 +557,15 @@ void carveChunkCaves(World& world, int chunk) {
                                     kWorldSeed + 12u, 2) - 0.5f) * 2.0f;
             const float ry = (fbm2((fx - qy * 40.0f) / 230.0f, (fy - qx * 40.0f) / 170.0f,
                                     kWorldSeed + 13u, 2) - 0.5f) * 2.0f;
+            // Beds are warped, but the threshold is now depth-based: stricter
+            // near the surface (fewer, smaller caves) and looser deeper, so
+            // caves grow with depth. The warp scale does not change with depth,
+            // so holes do not stretch vertically.
             const float beds = fbm2((fx + rx * 70.0f) / 200.0f,
                                     (fy + ry * 70.0f) / 130.0f,
                                     kWorldSeed + 31u, 3);
             const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
-            const float thresh = 0.66f;   // constant: same shape at every depth
+            const float thresh = 0.78f - depthFactor * 0.16f;   // looser deep
             if (beds > thresh) mask[at(x, y)] = 1;
         }
     }

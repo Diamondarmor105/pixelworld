@@ -483,6 +483,29 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         }
     }
 
+    // Thin air is noise, not cave: a line one or two cells wide (the diagonal
+    // streaks near the surface) has few air neighbours. Fill any air cell with
+    // three or fewer air neighbours out of eight. Decided from a snapshot so
+    // the result does not depend on scan order.
+    {
+        std::vector<std::pair<int, int>> thin;
+        for (int x = worldX0; x < worldX1; ++x) {
+            for (int y = 0; y < height - 3; ++y) {
+                if (world.at(x, y) != Mat::Air) continue;
+                int airNeigh = 0;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
+                        if (world.at(nx, ny) == Mat::Air) ++airNeigh;
+                    }
+                if (airNeigh <= 3) thin.emplace_back(x, y);
+            }
+        }
+        for (const auto& c : thin) world.set(c.first, c.second, Mat::Stone);
+    }
+
     // Remove tiny isolated pockets: flood-fill each air region and fill any
     // region smaller than kMinCave cells. What is left reads as caves, not dust.
     constexpr int kMinCave = 40;

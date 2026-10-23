@@ -631,6 +631,9 @@ void carveChunkCaves(World& world, int chunk) {
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
             if (world.at(x, y) == Mat::Sand) continue;
             if (y > 0 && world.at(x, y - 1) == Mat::Sand) continue;
+            // Only carve rock, never overwrite strata that was placed after the
+            // cave mask was computed. The mask is computed first; the chunk's
+            // strata are written in generateChunk before this runs.
             world.set(x, y, Mat::Air);
         }
 }

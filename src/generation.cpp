@@ -495,8 +495,11 @@ void carveChunkCaves(World& world, int chunk) {
             const float large = largeA * largeB;
             const float v = small + (large - small) * blend;
             const float rough = noise2(fx * 0.9f, fy * 0.9f, kWorldSeed + 1300u);
+            // Mid-scale edge detail: breaks the smooth outline of each hole so
+            // it stops reading as a circle. It does not change the hole's size.
+            const float edge = noise2(fx / 9.0f, fy / 9.0f, kWorldSeed + 1500u);
             const float thresh = kShallowThreshold + (kDeepThreshold - kShallowThreshold) * blend;
-            if (v + (rough - 0.5f) * 0.10f > thresh) mask[at(x, y)] = 1;
+            if (v + (rough - 0.5f) * 0.10f + (edge - 0.5f) * 0.16f > thresh) mask[at(x, y)] = 1;
         }
     }
 

@@ -628,7 +628,12 @@ void carveChunkCaves(World& world, int chunk) {
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
             if (world.at(x, y) == Mat::Sand) continue;
             if (y > 0 && world.at(x, y - 1) == Mat::Sand) continue;
-            if (world.at(x, y) != Mat::Stone) continue;
+            // Carve any solid rock, not just stone: the deep layers are basalt
+            // and obsidian, and caves must reach them too.
+            const Mat m = world.at(x, y);
+            if (m != Mat::Stone && m != Mat::Limestone && m != Mat::Basalt &&
+                m != Mat::Obsidian && m != Mat::PackedDirt && m != Mat::Gravel)
+                continue;
             world.set(x, y, Mat::Air);
         }
 }

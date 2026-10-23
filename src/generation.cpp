@@ -306,6 +306,9 @@ static float climateMoisture(int worldX, int y) {
 // the noise is read every kStrataStep rows and joined up in between. The
 // ground is the biggest thing in the world, and this is what keeps reading it
 // affordable.
+// Width of a fault block, in columns.
+constexpr float kFaultSpacing = 1400.0f;
+
 struct Strata {
     static constexpr int kStep = 16;
 
@@ -342,8 +345,17 @@ struct Strata {
             // order: different rock types at different depths, the way real
             // strata are stacked. The warped noise on top breaks them up.
             const float depthGrad = std::min(1.0f, std::max(0.0f, fy / 1800.0f));
+            // Faults: the world is cut into blocks kFaultSpacing columns wide,
+            // and each block shifts up or down and tilts on its own, so the rock
+            // snaps at each block edge and tilts inside it. The block depends on
+            // world position alone, so chunks agree.
+            const int block = static_cast<int>(std::floor(fx / kFaultSpacing));
+            const float blockShift = (hash01(block, 0, static_cast<int>(kWorldSeed) + 1700) - 0.5f) * 260.0f;
+            const float blockTilt = (hash01(block, 1, static_cast<int>(kWorldSeed) + 1701) - 0.5f) * 0.34f;
+            const float fromEdge = fx - static_cast<float>(block) * kFaultSpacing;
+            const float faulted = fy + blockShift + blockTilt * fromEdge;
             const float beds = fbm2((fx + rx * 70.0f) / 200.0f,
-                                    (fy + ry * 70.0f) / 130.0f,
+                                    (faulted + ry * 70.0f) / 130.0f,
                                     kWorldSeed + 31u, 3);
             float b = beds * 0.7f + depthGrad * 0.3f;
             // Sharpen transitions so beds have crisp edges.

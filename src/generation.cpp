@@ -551,19 +551,18 @@ void carveChunkCaves(World& world, int chunk) {
             const float fx = static_cast<float>(x);
             const float fy = static_cast<float>(y);
             // The same warp as the strata, so the cave walls fold and tilt.
-            const float qx = (fbm2(fx / 260.0f, fy / 200.0f, kWorldSeed + 10u, 2) - 0.5f) * 2.0f;
-            const float qy = (fbm2(fx / 260.0f, fy / 200.0f, kWorldSeed + 11u, 2) - 0.5f) * 2.0f;
-            const float rx = (fbm2((fx + qx * 50.0f) / 230.0f, (fy + qy * 50.0f) / 170.0f,
-                                    kWorldSeed + 12u, 2) - 0.5f) * 2.0f;
-            const float ry = (fbm2((fx - qy * 40.0f) / 230.0f, (fy - qx * 40.0f) / 170.0f,
-                                    kWorldSeed + 13u, 2) - 0.5f) * 2.0f;
-            // Beds are warped, but the threshold is now depth-based: stricter
-            // near the surface (fewer, smaller caves) and looser deeper, so
-            // caves grow with depth. The warp scale does not change with depth,
-            // so holes do not stretch vertically.
-            const float beds = fbm2((fx + rx * 70.0f) / 200.0f,
-                                    (fy + ry * 70.0f) / 130.0f,
-                                    kWorldSeed + 31u, 3);
+            // Strata-like cave: the same warp family as the rock beds, but with
+            // its own scales, seeds and thresholds, so the cave walls fold and
+            // tilt the way rock does without copying the rock exactly.
+            const float qx = (fbm2(fx / 300.0f, fy / 240.0f, kWorldSeed + 910u, 2) - 0.5f) * 2.0f;
+            const float qy = (fbm2(fx / 300.0f, fy / 240.0f, kWorldSeed + 911u, 2) - 0.5f) * 2.0f;
+            const float rx = (fbm2((fx + qx * 60.0f) / 270.0f, (fy + qy * 60.0f) / 200.0f,
+                                    kWorldSeed + 912u, 2) - 0.5f) * 2.0f;
+            const float ry = (fbm2((fx - qy * 50.0f) / 270.0f, (fy - qx * 50.0f) / 200.0f,
+                                    kWorldSeed + 913u, 2) - 0.5f) * 2.0f;
+            const float beds = fbm2((fx + rx * 80.0f) / 240.0f,
+                                    (fy + ry * 80.0f) / 150.0f,
+                                    kWorldSeed + 931u, 3);
             const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
             const float thresh = 0.78f - depthFactor * 0.16f;   // looser deep
             if (beds > thresh) mask[at(x, y)] = 1;

@@ -925,9 +925,12 @@ static float shapeWave(float x, float wavelength, uint32_t seed, int octaves) {
 // Each biome sits at a point on a low-frequency zone map. Where two biomes
 // meet, their heights are blended by weight across the overlap, so there is
 // no cliff at a biome border.
-enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3 };
-constexpr int kBiomeCount = 4;
-constexpr float kBiomeCentre[kBiomeCount] = {0.30f, 0.45f, 0.62f, 0.80f};
+enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3, Desert = 4 };
+constexpr int kBiomeCount = 5;
+// The first four biomes are placed on the zone map; the desert is placed by
+// temperature instead, so it appears where the country is hot.
+constexpr int kZoneBiomes = 4;
+constexpr float kBiomeCentre[kZoneBiomes] = {0.30f, 0.45f, 0.62f, 0.80f};
 constexpr float kBiomeReach = 0.12f;   // how far a biome's influence spreads on the zone map
 
 // How much each biome counts at this column. Each biome's weight is a smooth
@@ -937,12 +940,19 @@ constexpr float kBiomeReach = 0.12f;   // how far a biome's influence spreads on
 static void biomeWeights(int worldX, float out[kBiomeCount]) {
     const float zone = fbm1(static_cast<float>(worldX) / 4000.0f, kWorldSeed + 500u, 2);
     float sum = 0.0f;
-    for (int i = 0; i < kBiomeCount; ++i) {
+    for (int i = 0; i < kZoneBiomes; ++i) {
         const float d = (zone - kBiomeCentre[i]) / kBiomeReach;
         out[i] = std::exp(-d * d);
         sum += out[i];
     }
-    for (int i = 0; i < kBiomeCount; ++i) out[i] /= sum;
+    for (int i = 0; i < kZoneBiomes; ++i) out[i] /= sum;
+
+    // The desert takes over where the temperature is high, and the zone
+    // biomes give way to it in proportion.
+    const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX) - 0.55f) / 0.12f));
+    const float desert = hot * hot * (3.0f - 2.0f * hot);
+    for (int i = 0; i < kZoneBiomes; ++i) out[i] *= (1.0f - desert);
+    out[kZoneBiomes] = desert;
 }
 
 // The height offset (in rows, positive is lower) one biome gives a column.
@@ -962,6 +972,20 @@ static float biomeOffset(BiomeType biome, float x) {
         case BiomeType::Mountains: {
             // Fault-block ranges: a steep west face and a long slope east.
             return -40.0f - mountainHeightAt(static_cast<int>(std::lround(x))) * 260.0f;
+        }
+        case BiomeType::Desert: {
+            // Dunes: each one rises gently to the windward side and falls
+            // steeply on the lee side, the way wind builds them. A fine ripple
+            // runs over the top.
+            const float phase = x / 280.0f - std::floor(x / 280.0f);
+            // The windward slope climbs over the first 85% of the dune; the
+            // lee face falls over the last 15%. Both are continuous, so the lee
+            // face is steep but not a cliff.
+            constexpr float kCrest = 0.85f;
+            const float dune = phase < kCrest
+                ? 45.0f * (phase / kCrest) * (phase / kCrest)
+                : 45.0f * (1.0f - (phase - kCrest) / (1.0f - kCrest));
+            return dune + shapeWave(x, 40.0f, kWorldSeed + 80u, 1) * 3.0f;
         }
         case BiomeType::Canyons: {
             // Trenches: the absolute value of a wave cuts a V-shaped valley
@@ -1022,8 +1046,13 @@ int profileAt(int worldX) {
     // benches and mesas. The height is blended toward its stepped value, so
     // the steps sit where the country is arid and nowhere else.
     const float raw = profileHeight(worldX);
+    float biomeW[kBiomeCount];
+    biomeWeights(worldX, biomeW);
+    // Terracing is for the dry country around the desert; the dunes keep
+    // their own shape.
     const float arid = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX) - 0.55f) / 0.10f)) *
-                       std::min(1.0f, std::max(0.0f, (0.40f - climateMoisture(worldX, 0)) / 0.10f));
+                       std::min(1.0f, std::max(0.0f, (0.40f - climateMoisture(worldX, 0)) / 0.10f)) *
+                       (1.0f - biomeW[static_cast<int>(BiomeType::Desert)]);
     constexpr float kBench = 14.0f;   // rows per step
     const float stepped = std::floor(raw / kBench) * kBench;
     const int row = static_cast<int>(std::lround(raw + (stepped - raw) * arid));
@@ -1077,9 +1106,18 @@ static Land landAt(int worldX) {
     land.dirtRows = 12 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f);
 
     // Cold country is snow, hot country is sand, everything else is dirt.
-    if (temp < 0.30f) land.topMat = Mat::Snow;
-    else if (temp > 0.60f) land.topMat = Mat::Sand;
-    else land.topMat = Mat::Soil;
+    // The desert is dune sand: a deep layer over a thin dirt floor.
+    float biomeW[kBiomeCount];
+    biomeWeights(worldX, biomeW);
+    if (biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f) {
+        land.topMat = Mat::Sand;
+        land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
+        land.dirtRows = 3;
+    } else if (temp < 0.30f) {
+        land.topMat = Mat::Snow;
+    } else {
+        land.topMat = Mat::Soil;
+    }
     land.screeMat = land.topMat;
     return land;
 }

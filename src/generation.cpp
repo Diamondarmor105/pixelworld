@@ -561,7 +561,7 @@ void carveChunkCaves(World& world, int chunk) {
                                     (fy + ry * 70.0f) / 130.0f,
                                     kWorldSeed + 31u, 3);
             const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
-            const float thresh = 0.72f;   // constant: same shape at every depth
+            const float thresh = 0.66f;   // constant: same shape at every depth
             if (beds > thresh) mask[at(x, y)] = 1;
         }
     }

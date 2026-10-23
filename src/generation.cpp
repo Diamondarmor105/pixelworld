@@ -471,10 +471,20 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
             // blob stays separate, so caves do not join into a maze. Near the
             // surface the noise must peak very high (rare, small holes); deeper
             // the bar drops (more holes) and the noise scale grows (bigger holes).
-            float scale = 14.0f + depthFactor * 40.0f;
-            float v = noise2(static_cast<float>(x) / scale, static_cast<float>(y) / scale, kWorldSeed + 1200u);
+            // Scale follows the absolute row, not the depth below this column's
+            // ground: neighbouring columns share it, so holes are not pulled
+            // into vertical shafts where the ground height changes.
+            // Two fixed-scale noise fields, one small and one large. Near the
+            // surface only the small one is used; deeper the large one takes
+            // over, so holes grow with depth. Each field keeps its own
+            // coordinates, so nothing is rescaled with depth and nothing stretches.
+            const float blend = std::min(1.0f, std::max(0.0f, (static_cast<float>(y) - 250.0f) / 600.0f));
+            const float fx = static_cast<float>(x), fy = static_cast<float>(y);
+            const float small = noise2(fx / 24.0f, fy / 24.0f, kWorldSeed + 1200u);
+            const float large = noise2(fx / 56.0f, fy / 56.0f, kWorldSeed + 1201u);
+            const float v = small + (large - small) * blend;
             float rough = noise2(static_cast<float>(x) * 0.9f, static_cast<float>(y) * 0.9f, kWorldSeed + 1300u);
-            float thresh = 0.80f - depthFactor * 0.14f;
+            float thresh = 0.90f - 0.20f * std::min(1.0f, std::max(0.0f, (static_cast<float>(y) - 250.0f) / 750.0f));
             if (v + (rough - 0.5f) * 0.10f > thresh) {
                 if (world.at(x, y) != Mat::Water && world.at(x, y + 1) != Mat::Water) {
                     world.set(x, y, Mat::Air);
@@ -563,6 +573,46 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
                 }
             }
         }
+    }
+
+    // Fill air pieces too small to be caves: a hole under kMinHole cells is
+    // dust, not a cave. Real holes are much larger than this.
+    {
+    constexpr int kMinHole = 80;
+    const int width = worldX1 - worldX0;
+    std::vector<uint8_t> seen(static_cast<size_t>(width) * height, 0);
+    std::vector<int> stack;
+    std::vector<int> piece;
+    auto at = [&](int x, int y) { return static_cast<size_t>(y) * width + (x - worldX0); };
+    for (int x = worldX0; x < worldX1; ++x) {
+        for (int y = 0; y < height - 3; ++y) {
+            if (world.at(x, y) != Mat::Air || seen[at(x, y)]) continue;
+            piece.clear();
+            stack.clear();
+            stack.push_back(x);
+            stack.push_back(y);
+            seen[at(x, y)] = 1;
+            while (!stack.empty()) {
+                const int cy = stack.back(); stack.pop_back();
+                const int cx = stack.back(); stack.pop_back();
+                piece.push_back(cx);
+                piece.push_back(cy);
+                const int dx[4] = {-1, 1, 0, 0};
+                const int dy[4] = {0, 0, -1, 1};
+                for (int d = 0; d < 4; ++d) {
+                    const int nx = cx + dx[d], ny = cy + dy[d];
+                    if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
+                    if (seen[at(nx, ny)] || world.at(nx, ny) != Mat::Air) continue;
+                    seen[at(nx, ny)] = 1;
+                    stack.push_back(nx);
+                    stack.push_back(ny);
+                }
+            }
+            if (piece.size() / 2 < static_cast<size_t>(kMinHole)) {
+                for (size_t i = 0; i < piece.size(); i += 2) world.set(piece[i], piece[i + 1], Mat::Stone);
+            }
+        }
+    }
     }
 }
 

@@ -629,8 +629,6 @@ void carveChunkCaves(World& world, int chunk) {
         for (int y = 0; y < rows; ++y) {
             if (!mask[at(x, y)]) continue;
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
-            // Loose sand must keep its support. Carving a cell that is sand, or
-            // that has sand directly above it, would let the sand fall in.
             if (world.at(x, y) == Mat::Sand) continue;
             if (y > 0 && world.at(x, y - 1) == Mat::Sand) continue;
             world.set(x, y, Mat::Air);
@@ -1148,9 +1146,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             if (y >= surface) {
                 if (y >= height - 3) {
                     m = Mat::Bedrock;
-                } else if (y >= height - 180) {
-                    // The underworld: ash and a lava ocean at the very bottom.
-                    m = (y >= height - 35) ? Mat::Lava : Mat::Ash;
                 } else if (y < surface + land.snowRows) {
                     m = Mat::Snow;                       // snow on the mountain tops
                 } else if (y < surface + land.snowRows + land.screeRows) {
@@ -1213,119 +1208,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
-    // 5. A lava pool deep down, in a stone chamber, with sulfur crust in the
-    //    rock around it. The lava lies in the bottom of the chamber with a
-    //    level surface, and the chamber is a hole in the rock with a lumpy
-    //    outline - not a box with straight walls and a flat lid. Break the
-    //    chamber and the lava finds the sulfur.
-    {
-        const int lx = 30 + static_cast<int>(hash01(index, 0, 111) * (Chunk::WIDTH - 60.0f));
-        const int half = 8 + static_cast<int>(hash01(index, 0, 113) * 7.0f);
-        const int halfHeight = 6 + static_cast<int>(hash01(index, 0, 114) * 5.0f);
-        const int lavaDepth = 3 + static_cast<int>(hash01(index, 0, 115) * 3.0f);
-
-        // The middle of the chamber, deep down, but never so deep that it runs
-        // into the floor of the world.
-        const int mid = std::min(groundRow(baseX + lx) + 90 +
-                                     static_cast<int>(hash01(index, 0, 112) * 170.0f),
-                                 height - 40);
-
-        // The lava's surface: one level across the whole chamber, because
-        // lava is level like water.
-        const int lavaTop = mid + halfHeight - lavaDepth;
-
-        // How far the rock is hollowed in this column, measured out from the
-        // middle. The outline is lumpy, so the chamber is not an oval either.
-        auto hollow = [&](int dx) -> int {
-            const float t = static_cast<float>(dx) / static_cast<float>(half);
-            float s = 1.0f - t * t;
-            if (s <= 0.0f) return 0;
-            s = std::sqrt(s);
-            const float lump = noise1(static_cast<float>(dx) / 4.0f +
-                                          static_cast<float>(lx) * 0.21f,
-                                      kWorldSeed + 91u);
-            const int h = static_cast<int>(std::lround(halfHeight * s * (0.75f + lump * 0.5f)));
-            return h < 2 ? 2 : h;
-        };
-
-        // The chamber itself, and the shell of rock around it.
-        for (int dx = -half - 2; dx <= half + 2; ++dx) {
-            const int l = lx + dx;
-            if (l < 0 || l >= Chunk::WIDTH) continue;
-            const int h = hollow(dx);
-            const int outer = halfHeight + 2;
-            const int top = mid - (h > 0 ? h : outer);
-            const int bottom = mid + (h > 0 ? h : outer);
-            for (int y = top; y <= bottom; ++y) {
-                if (y < 0 || y >= height - 3) continue;
-                const bool inside = h > 0 && y >= mid - h && y <= mid + h;
-                Mat m = Mat::Stone;
-                if (inside) m = (y >= lavaTop) ? Mat::Lava : Mat::Air;
-                const size_t cell = chunk.index(l, y);
-                chunk.cells[cell] = static_cast<uint8_t>(m);
-                chunk.mass[cell] = (m == Mat::Lava) ? 1.0f : 0.0f;
-            }
-        }
-
-        // The sulfur crust in the rock around the lava, two cells out, so it
-        // waits for the lava to break through rather than setting the chamber
-        // off on the first tick.
-        for (int dx = -half - 2; dx <= half + 2; ++dx) {
-            const int l = lx + dx;
-            if (l < 0 || l >= Chunk::WIDTH) continue;
-            const int h = hollow(dx);
-            const int lavaBottom = mid + h - 1;
-            if (lavaBottom < lavaTop) continue;
-            for (int y = lavaTop; y <= lavaBottom; ++y) {
-                if (y < 0 || y >= height - 3) continue;
-                for (const int side : {-2, +2}) {
-                    const int sl = l + side;
-                    if (sl < 0 || sl >= Chunk::WIDTH) continue;
-                    const size_t cell = chunk.index(sl, y);
-                    if (chunk.cells[cell] != static_cast<uint8_t>(Mat::Stone)) continue;
-                    chunk.cells[cell] = static_cast<uint8_t>(Mat::SulfurCrust);
-                    chunk.mass[cell] = 0.0f;
-                }
-            }
-        }
-
-        // Any crust that ended up touching the lava would blow the chamber up
-        // the moment it was made, so it goes back to being rock.
-        for (int dx = -half - 3; dx <= half + 3; ++dx) {
-            const int l = lx + dx;
-            if (l < 0 || l >= Chunk::WIDTH) continue;
-            for (int y = mid - halfHeight - 3; y <= mid + halfHeight + 3; ++y) {
-                if (y < 0 || y >= height - 3) continue;
-                const size_t cell = chunk.index(l, y);
-                if (chunk.cells[cell] != static_cast<uint8_t>(Mat::SulfurCrust)) continue;
-                const bool touchingLava =
-                    (l > 0 && chunk.cells[chunk.index(l - 1, y)] == static_cast<uint8_t>(Mat::Lava)) ||
-                    (l + 1 < Chunk::WIDTH &&
-                     chunk.cells[chunk.index(l + 1, y)] == static_cast<uint8_t>(Mat::Lava)) ||
-                    (y > 0 && chunk.cells[chunk.index(l, y - 1)] == static_cast<uint8_t>(Mat::Lava)) ||
-                    (y + 1 < height - 3 &&
-                     chunk.cells[chunk.index(l, y + 1)] == static_cast<uint8_t>(Mat::Lava));
-                if (touchingLava) {
-                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
-                    chunk.mass[cell] = 0.0f;
-                }
-            }
-        }
-    }
-
-
-    // Loose sand must keep its support. Where the lava chamber or any other
-    // hollow opened up under a sand layer, make the sand's underside rock
-    // again, so the sand does not fall into the hollow.
-    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
-        for (int y = 1; y < height; ++y) {
-            const size_t cell = chunk.index(lx, y);
-            if (chunk.cells[cell] != static_cast<uint8_t>(Mat::Air)) continue;
-            if (chunk.cells[chunk.index(lx, y - 1)] != static_cast<uint8_t>(Mat::Sand)) continue;
-            chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
-            chunk.mass[cell] = 0.0f;
-        }
-    }
 }
 
 void generateChunksAround(World& world, int worldX, int radius) {

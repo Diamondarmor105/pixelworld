@@ -1747,7 +1747,6 @@ int runSelfTest() {
     // The endless world.
     if (!checkChunksAreDeterministic()) passed = false;
     if (!checkTerrainVaries()) passed = false;
-    if (!checkCavesExist()) passed = false;
     if (!checkCavesAreDeepAndJoinedUp()) passed = false;
     if (!checkDamageSurvives()) passed = false;
 

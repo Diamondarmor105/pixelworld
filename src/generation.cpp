@@ -864,11 +864,19 @@ constexpr int kScreeMax = 16;
 constexpr float kScreeRepose = 0.67f;
 
 // The height of the mountain at a column, before it is smoothed.
+// Width of a fault block in columns, and of the mountain range fault blocks.
+constexpr float kFaultBlock = 900.0f;
+
 static float rawMountainHeightAt(int worldX) {
     const float x = static_cast<float>(worldX);
 
-    // The crest of the range, folded so that it comes to a point.
-    const float crest = ridged1(x / 1500.0f, kWorldSeed + 23u, 3);
+    // Fault blocks: the land is cut into blocks kFaultBlock columns wide. Each
+    // block tilts up on its west edge, where the rock breaks into a sheer
+    // face, and falls away gently to the east. Each block has its own height.
+    const int block = static_cast<int>(std::floor(x / kFaultBlock));
+    const float f = (x - static_cast<float>(block) * kFaultBlock) / kFaultBlock;
+    const float blockHeight = 0.55f + 0.45f * hash01(block, 0, static_cast<int>(kWorldSeed) + 1910);
+    const float crest = blockHeight * std::pow(1.0f - f, 2.5f);
 
     // Where the ranges are. Most of the world has none: the ranges cross it
     // now and then, with wide plains between them.
@@ -906,7 +914,11 @@ static float shapeWave(float x, float wavelength, uint32_t seed, int octaves) {
 }
 
 static float profileHeight(int worldX) {
-    const float x = static_cast<float>(worldX);
+    // Domain warp: every height input is read at a point nudged by a slow
+    // noise offset, so ranges and valleys meander and pinch instead of running
+    // in straight, parallel bands.
+    const float x0 = static_cast<float>(worldX);
+    const float x = x0 + (fbm1(x0 / 400.0f, kWorldSeed + 1900u, 2) - 0.5f) * 2.0f * 200.0f;
 
     // The great swell: the whole world rising and falling over thousands of
     // columns, so the land is never the same height two valleys apart.
@@ -923,7 +935,7 @@ static float profileHeight(int worldX) {
     const float rough = shapeWave(x, 90.0f, kWorldSeed + 13u, 2);
     const float fine = shapeWave(x, 30.0f, kWorldSeed + 17u, 2);
 
-    const float mountain = mountainHeightAt(worldX);
+    const float mountain = mountainHeightAt(static_cast<int>(std::lround(x)));
 
     // Crags: the short, jagged detail that only the mountains have. On the
     // lowlands this is zero, because a plain with a sawtooth on it is not a

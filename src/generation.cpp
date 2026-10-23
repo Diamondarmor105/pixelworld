@@ -1202,6 +1202,8 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
                 const int y = centreY + dy;
                 if (l < 0 || l >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
                 const size_t cell = chunk.index(l, y);
+                // Never refill a cell that the cave carver has already hollowed.
+                if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;
                 chunk.cells[cell] = static_cast<uint8_t>(m);
                 chunk.mass[cell] = 1.0f;
             }
@@ -1219,6 +1221,7 @@ void generateChunksAround(World& world, int worldX, int radius) {
         generateChunk(index, chunk);
         newChunks.push_back(index);
     }
+    // Carve caves AFTER all chunks are generated, so the strata are in place.
     if (!newChunks.empty()) {
         int lo = *std::min_element(newChunks.begin(), newChunks.end()) - 1;
         int hi = *std::max_element(newChunks.begin(), newChunks.end()) + 1;

@@ -291,13 +291,64 @@ struct Land {
 // from a second, slower wave that does not care about the height at all.
 // Both are maps over the world rather than over the rock, so a whole region
 // shares one climate and the rock under it was laid down in that climate.
+// Provinces: the world is divided into regions, each with its own climate -
+// a desert, a tundra, a wet forest. Each province has a random point along the
+// world's length, and a column belongs to the province whose point is nearest.
+// Where two provinces meet, their climates blend across a band, so the border
+// is a gradual change rather than a line.
+constexpr float kProvinceSpacing = 900.0f;
+constexpr float kProvinceBlend = 0.35f;   // blend band, as a share of the spacing
+
+struct Provinces {
+    int nearest;
+    int second;
+    float weight;   // 1 deep inside the nearest province, 0.5 on the border
+};
+
+static Provinces provincesAt(int worldX) {
+    const float fx = static_cast<float>(worldX);
+    const int cell = static_cast<int>(std::floor(fx / kProvinceSpacing));
+    float bestD = 1e9f, secondD = 1e9f;
+    int best = 0, second = 0;
+    for (int c = cell - 2; c <= cell + 2; ++c) {
+        const int id = c;
+        const float point = (static_cast<float>(c) + hash01(id, 0, static_cast<int>(kWorldSeed) + 1800)) * kProvinceSpacing;
+        const float d = std::fabs(fx - point);
+        if (d < bestD) {
+            secondD = bestD; second = best;
+            bestD = d; best = id;
+        } else if (d < secondD) {
+            secondD = d; second = id;
+        }
+    }
+    const float band = kProvinceBlend * kProvinceSpacing;
+    float t = std::min(1.0f, std::max(0.0f, (secondD - bestD) / band));
+    t = t * t * (3.0f - 2.0f * t);
+    return {best, second, 0.5f + 0.5f * t};
+}
+
+static float provinceTemperature(int id) {
+    return 0.15f + 0.70f * hash01(id, 1, static_cast<int>(kWorldSeed) + 1801);
+}
+
+static float provinceMoisture(int id) {
+    return 0.10f + 0.80f * hash01(id, 2, static_cast<int>(kWorldSeed) + 1802);
+}
+
 static float climateTemperature(int worldX) {
-    return fbm1(static_cast<float>(worldX) / 8000.0f, kWorldSeed + 201u, 3);
+    const Provinces p = provincesAt(worldX);
+    const float base = provinceTemperature(p.nearest) * p.weight +
+                       provinceTemperature(p.second) * (1.0f - p.weight);
+    return std::min(1.0f, std::max(0.0f, base + (fbm1(static_cast<float>(worldX) / 8000.0f, kWorldSeed + 201u, 3) - 0.5f) * 0.2f));
 }
 
 static float climateMoisture(int worldX, int y) {
-    return fbm2(static_cast<float>(worldX) / 6000.0f,
-                static_cast<float>(y) / 4000.0f, kWorldSeed + 211u, 2);
+    const Provinces p = provincesAt(worldX);
+    const float base = provinceMoisture(p.nearest) * p.weight +
+                       provinceMoisture(p.second) * (1.0f - p.weight);
+    const float wander = fbm2(static_cast<float>(worldX) / 6000.0f,
+                              static_cast<float>(y) / 4000.0f, kWorldSeed + 211u, 2);
+    return std::min(1.0f, std::max(0.0f, base + (wander - 0.5f) * 0.25f));
 }
 
 // The rock's bands and its climate, sampled down a column.

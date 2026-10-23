@@ -8,6 +8,8 @@
 #include <cmath>
 #include <vector>
 
+void carveChunkArches(World& world, int chunk);
+
 namespace {
 
 // The seed of the whole world. One number decides everything: where the hills
@@ -641,9 +643,18 @@ void carveChunkCaves(World& world, int chunk) {
         }
 }
 
+
+// Natural arches: horizontal tunnels through the faces of steep cliffs. A
+// tunnel is an ellipse, centred a few rows below the cliff's top, so the rock
+// above it stays solid and reads as a bridge where the tunnel passes through.
+// Each chunk carves only its own columns, from the same hashed centres, so
+// arches agree across chunk borders.
 void carveCaves(World& world, int chunkStart, int chunkEnd) {
     for (int chunk = chunkStart; chunk <= chunkEnd; ++chunk) {
-        if (world.hasChunk(chunk)) carveChunkCaves(world, chunk);
+        if (world.hasChunk(chunk)) {
+            carveChunkCaves(world, chunk);
+            carveChunkArches(world, chunk);
+        }
     }
 }
 
@@ -1042,12 +1053,29 @@ static Land landAt(int worldX) {
         land.dirtRows += static_cast<int>(std::lround(flat * low * 14.0f));
     }
 
+    // Curvature: is this column on a crest (higher than the ground either
+    // side of it) or in a hollow (lower than both)? Rows grow downward, so a
+    // crest has a smaller row than the average of its neighbours.
+    const float curve = (static_cast<float>(profileAt(worldX - 4) + profileAt(worldX + 4)) * 0.5f) -
+                        static_cast<float>(profile);
+    // A crest sheds its soil: rain and wind strip the top, so the rock shows.
+    // A hollow collects what washes down from the slopes around it.
+    if (!high && curve > 0.8f) land.soilRows = 1;
+    if (!high && curve < -0.8f) {
+        land.soilRows += 3;
+        land.dirtRows += 6;
+    }
+
     // What the ground surface is made of.
     //
     // A hot dry country is sand. A wet one is mud. A warm damp one is clay.
     // A cold one is frozen ground. A mountain is bare rock. Everything else
     // is ordinary soil.
     if (high) {
+        land.topMat = Mat::Stone;
+        land.screeMat = Mat::Gravel;
+    } else if (!high && curve > 0.8f && slope > 0.25f) {
+        // A bare ridge with some slope to it: the crest shows rock.
         land.topMat = Mat::Stone;
         land.screeMat = Mat::Gravel;
     } else if (slope > 0.9f) {
@@ -1106,6 +1134,38 @@ static Land landAt(int worldX) {
     land.profile = profile;
     land.surface = profile - land.screeRows - land.snowRows;
     return land;
+}
+
+static float columnSlope(int x) {
+    return std::fabs(static_cast<float>(profileAt(x + 4) - profileAt(x - 4))) / 8.0f;
+}
+
+void carveChunkArches(World& world, int chunk) {
+    constexpr int kSpacing = 64;
+    constexpr int kReach = 24;
+    const int height = world.height();
+    const int ownX0 = chunk * Chunk::WIDTH;
+    const int ownX1 = ownX0 + Chunk::WIDTH;
+    for (int gx = (ownX0 - kReach) / kSpacing - 1; gx <= (ownX1 + kReach) / kSpacing + 1; ++gx) {
+        const float jitter = hash01(gx, 0, static_cast<int>(kWorldSeed) + 1900);
+        if (hash01(gx, 1, static_cast<int>(kWorldSeed) + 1901) > 0.35f) continue;
+        const int cx = gx * kSpacing + static_cast<int>(jitter * kSpacing);
+        if (columnSlope(cx) < 0.6f) continue;
+        const int cy = profileAt(cx) + 18;
+        const float rx = 10.0f + 6.0f * hash01(gx, 2, static_cast<int>(kWorldSeed) + 1902);
+        const float ry = 3.0f + 1.0f * hash01(gx, 3, static_cast<int>(kWorldSeed) + 1903);
+        for (int y = cy - 5; y <= cy + 5; ++y) {
+            if (y < 0 || y >= height - 3) continue;
+            for (int x = static_cast<int>(cx - rx) - 1; x <= static_cast<int>(cx + rx) + 1; ++x) {
+                if (x < ownX0 || x >= ownX1) continue;
+                const float dx = (x - cx) / rx, dy = (y - cy) / ry;
+                if (dx * dx + dy * dy > 1.0f) continue;
+                if (y < profileAt(x) + 12) continue;
+                if (world.at(x, y) == Mat::Water) continue;
+                world.set(x, y, Mat::Air);
+            }
+        }
+    }
 }
 
 // -- The endless world ------------------------------------------------------

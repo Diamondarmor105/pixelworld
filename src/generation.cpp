@@ -920,6 +920,59 @@ static float shapeWave(float x, float wavelength, uint32_t seed, int octaves) {
     return (fbm1(x / wavelength, seed, octaves) - 0.5f) * 2.0f;
 }
 
+// Biomes: each region of the world has its own height formula, so plains,
+// hills, mountains and canyons have different shapes, not one shape scaled.
+// Each biome sits at a point on a low-frequency zone map. Where two biomes
+// meet, their heights are blended by weight across the overlap, so there is
+// no cliff at a biome border.
+enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3 };
+constexpr int kBiomeCount = 4;
+constexpr float kBiomeCentre[kBiomeCount] = {0.30f, 0.45f, 0.62f, 0.80f};
+constexpr float kBiomeReach = 0.12f;   // how far a biome's influence spreads on the zone map
+
+// How much each biome counts at this column. Each biome's weight is a smooth
+// bell around its centre on the zone map. The bells never reach zero, so some
+// biome always applies and the blend has no gaps, however the zone map varies.
+// The weights sum to 1.
+static void biomeWeights(int worldX, float out[kBiomeCount]) {
+    const float zone = fbm1(static_cast<float>(worldX) / 4000.0f, kWorldSeed + 500u, 2);
+    float sum = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) {
+        const float d = (zone - kBiomeCentre[i]) / kBiomeReach;
+        out[i] = std::exp(-d * d);
+        sum += out[i];
+    }
+    for (int i = 0; i < kBiomeCount; ++i) out[i] /= sum;
+}
+
+// The height offset (in rows, positive is lower) one biome gives a column.
+static float biomeOffset(BiomeType biome, float x) {
+    switch (biome) {
+        case BiomeType::Plains: {
+            // Gentle, low-amplitude ripple.
+            const float fine = shapeWave(x, 150.0f, kWorldSeed + 17u, 1);
+            return -fine * 8.0f;
+        }
+        case BiomeType::Hills: {
+            // Rolling hills with some roughness.
+            const float hills = shapeWave(x, 900.0f, kWorldSeed + 11u, 3);
+            const float rough = shapeWave(x, 90.0f, kWorldSeed + 13u, 2);
+            return -hills * 100.0f - rough * 25.0f;
+        }
+        case BiomeType::Mountains: {
+            // Fault-block ranges: a steep west face and a long slope east.
+            return -40.0f - mountainHeightAt(static_cast<int>(std::lround(x))) * 260.0f;
+        }
+        case BiomeType::Canyons: {
+            // Trenches: the absolute value of a wave cuts a V-shaped valley
+            // into the ground, so the land is pushed down along each trench.
+            const float trench = std::fabs(shapeWave(x, 600.0f, kWorldSeed + 45u, 2));
+            return trench * 70.0f;
+        }
+    }
+    return 0.0f;
+}
+
 static float profileHeight(int worldX) {
     // Domain warp: every height input is read at a point nudged by a slow
     // noise offset, so ranges and valleys meander and pinch instead of running
@@ -927,46 +980,23 @@ static float profileHeight(int worldX) {
     const float x0 = static_cast<float>(worldX);
     const float x = x0 + (fbm1(x0 / 400.0f, kWorldSeed + 1900u, 2) - 0.5f) * 2.0f * 200.0f;
 
-    // The great swell: the whole world rising and falling over thousands of
-    // columns, so the land is never the same height two valleys apart.
+    // The swell is shared by every biome, so the continents still roll.
     const float swell = shapeWave(x, 5200.0f, kWorldSeed + 5u, 2);
 
-    // Broad rolling hills on top of that.
-    const float hills = shapeWave(x, 900.0f, kWorldSeed + 11u, 3);
-    const float hills2 = shapeWave(x, 260.0f, kWorldSeed + 12u, 2);
-
-    // Bumps and hollows a few dozen columns across. These are what keep the
-    // ground from settling into long flat terraces: a land whose only shapes
-    // are a kilometre wide is a staircase of identical steps, because every
-    // step of one row is followed by a hundred columns of nothing.
-    const float rough = shapeWave(x, 90.0f, kWorldSeed + 13u, 2);
-    const float fine = shapeWave(x, 30.0f, kWorldSeed + 17u, 2);
-
-    const float mountain = mountainHeightAt(static_cast<int>(std::lround(x)));
-
-    // Crags: the short, jagged detail that only the mountains have. On the
-    // lowlands this is zero, because a plain with a sawtooth on it is not a
-    // mountain, it is a sawtooth.
-    const float crags = shapeWave(x, 170.0f, kWorldSeed + 19u, 2) * mountain;
-
-    // The channels the rain cut. The folded noise is high along a winding
-    // line, and that line is where the water runs, so the ground is cut down
-    // along it and the cut is widest where the fold is strongest.
+    // The channels the rain cut, present everywhere.
     const float crestLine = ridged1(x / 520.0f, kWorldSeed + 67u, 2);
     const float channel = std::max(0.0f, crestLine - 0.62f) / 0.38f;
-    const float eroded = channel * channel * 26.0f *
-                         fbm1(x / 1600.0f, kWorldSeed + 68u, 2);
+    const float eroded = channel * channel * 26.0f * fbm1(x / 1600.0f, kWorldSeed + 68u, 2);
 
-    // Lowland level. Everything else is measured up from here.
-    return 330.0f
-         - swell * 190.0f
-         - hills * 130.0f
-         - hills2 * 56.0f
-         - rough * 38.0f
-         - fine * 13.0f
-         - mountain * 260.0f
-         - crags * 56.0f
-         + eroded;
+    float w[kBiomeCount];
+    biomeWeights(worldX, w);
+    float offset = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) {
+        if (w[i] <= 0.0f) continue;
+        offset += w[i] * biomeOffset(static_cast<BiomeType>(i), x);
+    }
+
+    return 330.0f - swell * 190.0f + offset + eroded;
 }
 
 // The height of the ground at a column, remembered.
@@ -1043,31 +1073,13 @@ static Land landAt(int worldX) {
     land.screeRows = 0;
     land.snowRows = 0;
 
-    const int soilBase = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
-    const int dirtBase = 12 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f);
+    land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
+    land.dirtRows = 12 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f);
 
-    // Biomes blend rather than switch. Each zone has a band at its edge, and
-    // across that band a jittered threshold decides column by column which
-    // material the surface is, so the border is a mix of the two, not a line.
-    const float sandW = std::min(1.0f, std::max(0.0f, (temp - 0.55f) / 0.10f));
-    const float snowW = std::min(1.0f, std::max(0.0f, (0.36f - temp) / 0.08f));
-    const float jitter = noise1(x / 7.0f, kWorldSeed + 70u);
-    const float jitter2 = noise1(x / 9.0f, kWorldSeed + 71u);
-
-    if (snowW > jitter) {
-        land.topMat = Mat::Snow;
-        land.soilRows = soilBase;
-        land.dirtRows = dirtBase;
-    } else if (sandW > jitter2) {
-        // Desert: a deep layer of sand, with only a thin dirt floor under it.
-        land.topMat = Mat::Sand;
-        land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
-        land.dirtRows = 3;
-    } else {
-        land.topMat = Mat::Soil;
-        land.soilRows = soilBase;
-        land.dirtRows = dirtBase;
-    }
+    // Cold country is snow, hot country is sand, everything else is dirt.
+    if (temp < 0.30f) land.topMat = Mat::Snow;
+    else if (temp > 0.60f) land.topMat = Mat::Sand;
+    else land.topMat = Mat::Soil;
     land.screeMat = land.topMat;
     return land;
 }

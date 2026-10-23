@@ -463,7 +463,7 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 // Shallow caves: small holes, fairly common near the surface.
 constexpr float kShallowThreshold = 0.13f;
 // Deep caves: larger holes, rarer, so the bar is higher.
-constexpr float kDeepThreshold = 0.21f;
+constexpr float kDeepThreshold = 0.20f;
 // How far the cave fields are pushed about, in cells (the domain warp).
 constexpr float kCaveWarp = 40.0f;
 

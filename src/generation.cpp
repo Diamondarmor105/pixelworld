@@ -483,27 +483,47 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         }
     }
 
-    // Thin air is noise, not cave: a line one or two cells wide (the diagonal
-    // streaks near the surface) has few air neighbours. Fill any air cell with
-    // three or fewer air neighbours out of eight. Decided from a snapshot so
-    // the result does not depend on scan order.
+    // Morphological opening on the air: erode twice, then dilate twice (4-way
+    // neighbourhoods). Anything narrower than about five cells - the sheared
+    // diagonal slivers that simplex noise leaves at small scales - cannot
+    // survive the erosion, while round holes keep their shape. Each step is
+    // decided from a snapshot so the result does not depend on scan order.
     {
-        std::vector<std::pair<int, int>> thin;
-        for (int x = worldX0; x < worldX1; ++x) {
-            for (int y = 0; y < height - 3; ++y) {
-                if (world.at(x, y) != Mat::Air) continue;
-                int airNeigh = 0;
-                for (int dy = -1; dy <= 1; ++dy)
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        if (dx == 0 && dy == 0) continue;
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
-                        if (world.at(nx, ny) == Mat::Air) ++airNeigh;
+        const int w = worldX1 - worldX0;
+        auto isAir = [&](const std::vector<uint8_t>& m, int x, int y) {
+            return m[static_cast<size_t>(y) * w + (x - worldX0)] != 0;
+        };
+        std::vector<uint8_t> mask(static_cast<size_t>(w) * height, 0);
+        for (int x = worldX0; x < worldX1; ++x)
+            for (int y = 0; y < height - 3; ++y)
+                mask[static_cast<size_t>(y) * w + (x - worldX0)] = world.at(x, y) == Mat::Air ? 1 : 0;
+        auto step = [&](bool erode) {
+            std::vector<uint8_t> next(mask.size(), 0);
+            const int dx[4] = {-1, 1, 0, 0};
+            const int dy[4] = {0, 0, -1, 1};
+            for (int x = worldX0; x < worldX1; ++x)
+                for (int y = 0; y < height - 3; ++y) {
+                    bool hit = erode;   // erode: need all four neighbours air
+                    for (int d = 0; d < 4; ++d) {
+                        int nx = x + dx[d], ny = y + dy[d];
+                        bool n = nx >= worldX0 && nx < worldX1 && ny >= 0 && ny < height - 3 &&
+                                 isAir(mask, nx, ny);
+                        if (erode) hit = hit && n;
+                        else hit = hit || n;   // dilate: any neighbour air
                     }
-                if (airNeigh <= 3) thin.emplace_back(x, y);
-            }
-        }
-        for (const auto& c : thin) world.set(c.first, c.second, Mat::Stone);
+                    if (isAir(mask, x, y)) hit = erode ? hit : true;
+                    next[static_cast<size_t>(y) * w + (x - worldX0)] = hit ? 1 : 0;
+                }
+            mask.swap(next);
+        };
+        step(true);
+        step(true);
+        step(false);
+        step(false);
+        for (int x = worldX0; x < worldX1; ++x)
+            for (int y = 0; y < height - 3; ++y)
+                if (world.at(x, y) == Mat::Air && !isAir(mask, x, y))
+                    world.set(x, y, Mat::Stone);
     }
 
     // Remove tiny isolated pockets: flood-fill each air region and fill any

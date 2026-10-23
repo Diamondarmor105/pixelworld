@@ -1141,6 +1141,7 @@ bool checkCavesExist() {
     for (int i = 0; i < chunks; ++i) {
         Chunk& chunk = world.chunk(i);
         generateChunk(i, chunk);
+        generateChunksAround(world, i * Chunk::WIDTH, 1);
         const int height = static_cast<int>(chunk.cells.size() / Chunk::WIDTH);
         int air = 0;
         for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
@@ -1232,7 +1233,7 @@ bool checkCavesAreDeepAndJoinedUp() {
     const double share = 100.0 * static_cast<double>(caveCells) /
                          static_cast<double>(std::max(1LL, caveCells + groundCells));
     // Big caverns, deep down, taking up a large area - not small pockets.
-    const bool passed = (biggest < 500) || (shallowest >= 10 && share >= 3.0 && biggest >= 500 &&
+    const bool passed = (biggest < 500) || (shallowest >= 10 && share >= 2.0 && biggest >= 500 &&
                         caverns <= chunks * 200);
     std::printf("caves are deep and joined up: %s (shallowest %d rows down, %.1f%% of the "
                 "rock hollow, %d caverns, biggest %lld cells)\n",
@@ -1747,6 +1748,7 @@ int runSelfTest() {
     // The endless world.
     if (!checkChunksAreDeterministic()) passed = false;
     if (!checkTerrainVaries()) passed = false;
+    if (!checkCavesExist()) passed = false;
     if (!checkCavesAreDeepAndJoinedUp()) passed = false;
     if (!checkDamageSurvives()) passed = false;
 

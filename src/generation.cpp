@@ -547,7 +547,7 @@ void carveChunkCaves(World& world, int chunk) {
     std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
     for (int x = winX0; x < winX0 + winW; ++x) {
         const int surf = groundRow(x);
-        for (int y = surf + 12; y < height - 100 && y < rows; ++y) {
+        for (int y = surf + 12; y < height - 3 && y < rows; ++y) {
             const float fx = static_cast<float>(x);
             const float fy = static_cast<float>(y);
             // The same warp as the strata, so the cave walls fold and tilt.

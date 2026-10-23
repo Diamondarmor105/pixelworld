@@ -876,7 +876,14 @@ static float rawMountainHeightAt(int worldX) {
     const int block = static_cast<int>(std::floor(x / kFaultBlock));
     const float f = (x - static_cast<float>(block) * kFaultBlock) / kFaultBlock;
     const float blockHeight = 0.55f + 0.45f * hash01(block, 0, static_cast<int>(kWorldSeed) + 1910);
-    const float crest = blockHeight * std::pow(1.0f - f, 2.5f);
+    // The west face rises over the first part of the block rather than
+    // dropping in one column, so the land is continuous at the block edge and
+    // the face is a steep slope, not a wall. The rest of the block falls away
+    // gently to the east.
+    constexpr float kFace = 0.40f;
+    const float face = std::min(1.0f, f / kFace);
+    const float rise = face * face * (3.0f - 2.0f * face);
+    const float crest = blockHeight * rise * std::pow(1.0f - f, 2.5f);
 
     // Where the ranges are. Most of the world has none: the ranges cross it
     // now and then, with wide plains between them.
@@ -1036,13 +1043,31 @@ static Land landAt(int worldX) {
     land.screeRows = 0;
     land.snowRows = 0;
 
-    land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
-    land.dirtRows = 12 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f);
+    const int soilBase = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
+    const int dirtBase = 12 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f);
 
-    // Cold country is snow, hot country is sand, everything else is dirt.
-    if (temp < 0.30f) land.topMat = Mat::Snow;
-    else if (temp > 0.60f) land.topMat = Mat::Sand;
-    else land.topMat = Mat::Soil;
+    // Biomes blend rather than switch. Each zone has a band at its edge, and
+    // across that band a jittered threshold decides column by column which
+    // material the surface is, so the border is a mix of the two, not a line.
+    const float sandW = std::min(1.0f, std::max(0.0f, (temp - 0.55f) / 0.10f));
+    const float snowW = std::min(1.0f, std::max(0.0f, (0.36f - temp) / 0.08f));
+    const float jitter = noise1(x / 7.0f, kWorldSeed + 70u);
+    const float jitter2 = noise1(x / 9.0f, kWorldSeed + 71u);
+
+    if (snowW > jitter) {
+        land.topMat = Mat::Snow;
+        land.soilRows = soilBase;
+        land.dirtRows = dirtBase;
+    } else if (sandW > jitter2) {
+        // Desert: a deep layer of sand, with only a thin dirt floor under it.
+        land.topMat = Mat::Sand;
+        land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
+        land.dirtRows = 3;
+    } else {
+        land.topMat = Mat::Soil;
+        land.soilRows = soilBase;
+        land.dirtRows = dirtBase;
+    }
     land.screeMat = land.topMat;
     return land;
 }

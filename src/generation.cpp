@@ -981,7 +981,15 @@ int profileAt(int worldX) {
                         static_cast<size_t>(kSlots - 1);
     if (keys[slot] == worldX) return values[slot];
 
-    const int row = static_cast<int>(std::lround(profileHeight(worldX)));
+    // Terracing: in arid provinces (hot and dry) the land is stepped into
+    // benches and mesas. The height is blended toward its stepped value, so
+    // the steps sit where the country is arid and nowhere else.
+    const float raw = profileHeight(worldX);
+    const float arid = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX) - 0.55f) / 0.10f)) *
+                       std::min(1.0f, std::max(0.0f, (0.40f - climateMoisture(worldX, 0)) / 0.10f));
+    constexpr float kBench = 14.0f;   // rows per step
+    const float stepped = std::floor(raw / kBench) * kBench;
+    const int row = static_cast<int>(std::lround(raw + (stepped - raw) * arid));
     keys[slot] = worldX;
     values[slot] = row;
     return row;

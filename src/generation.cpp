@@ -456,24 +456,25 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 }
 
 
-void carveCaves(World& world, int chunkStart, int chunkEnd) {
-    const int worldX0 = chunkStart * Chunk::WIDTH;
-    const int worldX1 = (chunkEnd + 1) * Chunk::WIDTH;
+// Carves the caves of one chunk. The result depends only on the chunk index,
+// not on which other chunks happen to be built alongside it, so chunks agree
+// at their seams however they were batched. The cleanup steps look at a fixed
+// margin around the chunk, and the chunk writes only its own columns.
+void carveChunkCaves(World& world, int chunk) {
+    constexpr int kMargin = 64;
+    constexpr int kMinHole = 80;
     const int height = world.height();
-    const int width = worldX1 - worldX0;
+    const int ownX0 = chunk * Chunk::WIDTH;
+    const int winX0 = ownX0 - kMargin;
+    const int winW = Chunk::WIDTH + 2 * kMargin;
+    const int rows = height - 3;
+    auto at = [&](int x, int y) { return static_cast<size_t>(y) * winW + (x - winX0); };
 
-    for (int x = worldX0; x < worldX1; ++x) {
-        int surf = groundRow(x);
-        for (int y = surf + 20; y < height - 100; ++y) {
-            float depth = static_cast<float>(y - surf);
-            float depthFactor = std::min(1.0f, std::max(0.0f, (depth - 20.0f) / 400.0f));
-            // Swiss cheese: blobs of noise, carved where the noise peaks. Each
-            // blob stays separate, so caves do not join into a maze. Near the
-            // surface the noise must peak very high (rare, small holes); deeper
-            // the bar drops (more holes) and the noise scale grows (bigger holes).
-            // Scale follows the absolute row, not the depth below this column's
-            // ground: neighbouring columns share it, so holes are not pulled
-            // into vertical shafts where the ground height changes.
+    // Raw carve mask over the window. Pure noise and ground height only.
+    std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
+    for (int x = winX0; x < winX0 + winW; ++x) {
+        const int surf = groundRow(x);
+        for (int y = surf + 20; y < height - 100 && y < rows; ++y) {
             // Two fixed-scale noise fields, one small and one large. Near the
             // surface only the small one is used; deeper the large one takes
             // over, so holes grow with depth. Each field keeps its own
@@ -483,110 +484,44 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
             const float small = noise2(fx / 24.0f, fy / 24.0f, kWorldSeed + 1200u);
             const float large = noise2(fx / 56.0f, fy / 56.0f, kWorldSeed + 1201u);
             const float v = small + (large - small) * blend;
-            float rough = noise2(static_cast<float>(x) * 0.9f, static_cast<float>(y) * 0.9f, kWorldSeed + 1300u);
-            float thresh = 0.90f - 0.20f * std::min(1.0f, std::max(0.0f, (static_cast<float>(y) - 250.0f) / 750.0f));
-            if (v + (rough - 0.5f) * 0.10f > thresh) {
-                if (world.at(x, y) != Mat::Water && world.at(x, y + 1) != Mat::Water) {
-                    world.set(x, y, Mat::Air);
-                }
-            }
+            const float rough = noise2(fx * 0.9f, fy * 0.9f, kWorldSeed + 1300u);
+            const float thresh = 0.90f - 0.20f * std::min(1.0f, std::max(0.0f, (fy - 250.0f) / 750.0f));
+            if (v + (rough - 0.5f) * 0.10f > thresh) mask[at(x, y)] = 1;
         }
     }
 
-    // Morphological opening on the air: erode twice, then dilate twice (4-way
-    // neighbourhoods). Anything narrower than about five cells - the sheared
-    // diagonal slivers that simplex noise leaves at small scales - cannot
-    // survive the erosion, while round holes keep their shape. Each step is
-    // decided from a snapshot so the result does not depend on scan order.
-    {
-        const int w = worldX1 - worldX0;
-        auto isAir = [&](const std::vector<uint8_t>& m, int x, int y) {
-            return m[static_cast<size_t>(y) * w + (x - worldX0)] != 0;
-        };
-        std::vector<uint8_t> mask(static_cast<size_t>(w) * height, 0);
-        for (int x = worldX0; x < worldX1; ++x)
-            for (int y = 0; y < height - 3; ++y)
-                mask[static_cast<size_t>(y) * w + (x - worldX0)] = world.at(x, y) == Mat::Air ? 1 : 0;
-        auto step = [&](bool erode) {
-            std::vector<uint8_t> next(mask.size(), 0);
-            const int dx[4] = {-1, 1, 0, 0};
-            const int dy[4] = {0, 0, -1, 1};
-            for (int x = worldX0; x < worldX1; ++x)
-                for (int y = 0; y < height - 3; ++y) {
-                    bool hit = erode;   // erode: need all four neighbours air
-                    for (int d = 0; d < 4; ++d) {
-                        int nx = x + dx[d], ny = y + dy[d];
-                        bool n = nx >= worldX0 && nx < worldX1 && ny >= 0 && ny < height - 3 &&
-                                 isAir(mask, nx, ny);
-                        if (erode) hit = hit && n;
-                        else hit = hit || n;   // dilate: any neighbour air
-                    }
-                    if (isAir(mask, x, y)) hit = erode ? hit : true;
-                    next[static_cast<size_t>(y) * w + (x - worldX0)] = hit ? 1 : 0;
-                }
-            mask.swap(next);
-        };
-        step(true);
-        step(true);
-        step(false);
-        step(false);
-        for (int x = worldX0; x < worldX1; ++x)
-            for (int y = 0; y < height - 3; ++y)
-                if (world.at(x, y) == Mat::Air && !isAir(mask, x, y))
-                    world.set(x, y, Mat::Stone);
-    }
-
-    // Remove tiny isolated pockets: flood-fill each air region and fill any
-    // region smaller than kMinCave cells. What is left reads as caves, not dust.
-    constexpr int kMinCave = 40;
-    std::vector<uint8_t> seen(static_cast<size_t>(width) * height, 0);
-    std::vector<int> stack;
-    std::vector<int> region;
-    auto idx = [&](int x, int y) { return static_cast<size_t>(y) * width + (x - worldX0); };
-    for (int x = worldX0; x < worldX1; ++x) {
-        for (int y = 0; y < height - 3; ++y) {
-            if (world.at(x, y) != Mat::Air || seen[idx(x, y)]) continue;
-            region.clear();
-            stack.clear();
-            stack.push_back(x);
-            stack.push_back(y);
-            seen[idx(x, y)] = 1;
-            while (!stack.empty()) {
-                int cy = stack.back(); stack.pop_back();
-                int cx = stack.back(); stack.pop_back();
-                region.push_back(cx);
-                region.push_back(cy);
-                const int dx[4] = {-1, 1, 0, 0};
-                const int dy[4] = {0, 0, -1, 1};
+    // Morphological opening: erode twice, then dilate twice, 4-way. Anything
+    // narrower than about five cells - the sheared slivers simplex noise leaves
+    // at small scales - cannot survive, while round holes keep their shape.
+    auto step = [&](bool erode) {
+        std::vector<uint8_t> next(mask.size(), 0);
+        const int dx[4] = {-1, 1, 0, 0};
+        const int dy[4] = {0, 0, -1, 1};
+        for (int x = winX0; x < winX0 + winW; ++x)
+            for (int y = 0; y < rows; ++y) {
+                bool hit = erode;
                 for (int d = 0; d < 4; ++d) {
-                    int nx = cx + dx[d], ny = cy + dy[d];
-                    if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
-                    if (seen[idx(nx, ny)] || world.at(nx, ny) != Mat::Air) continue;
-                    seen[idx(nx, ny)] = 1;
-                    stack.push_back(nx);
-                    stack.push_back(ny);
+                    const int nx = x + dx[d], ny = y + dy[d];
+                    const bool n = nx >= winX0 && nx < winX0 + winW && ny >= 0 && ny < rows &&
+                                   mask[at(nx, ny)] != 0;
+                    hit = erode ? (hit && n) : (hit || n);
                 }
+                next[at(x, y)] = hit ? 1 : 0;
             }
-            if (region.size() / 2 < static_cast<size_t>(kMinCave)) {
-                for (size_t i = 0; i < region.size(); i += 2) {
-                    world.set(region[i], region[i + 1], Mat::Stone);
-                }
-            }
-        }
-    }
+        mask.swap(next);
+    };
+    step(true);
+    step(true);
+    step(false);
+    step(false);
 
-    // Fill air pieces too small to be caves: a hole under kMinHole cells is
-    // dust, not a cave. Real holes are much larger than this.
-    {
-    constexpr int kMinHole = 80;
-    const int width = worldX1 - worldX0;
-    std::vector<uint8_t> seen(static_cast<size_t>(width) * height, 0);
+    // Fill pieces too small to be caves. Real holes are much larger than this.
+    std::vector<uint8_t> seen(mask.size(), 0);
     std::vector<int> stack;
     std::vector<int> piece;
-    auto at = [&](int x, int y) { return static_cast<size_t>(y) * width + (x - worldX0); };
-    for (int x = worldX0; x < worldX1; ++x) {
-        for (int y = 0; y < height - 3; ++y) {
-            if (world.at(x, y) != Mat::Air || seen[at(x, y)]) continue;
+    for (int x = winX0; x < winX0 + winW; ++x)
+        for (int y = 0; y < rows; ++y) {
+            if (!mask[at(x, y)] || seen[at(x, y)]) continue;
             piece.clear();
             stack.clear();
             stack.push_back(x);
@@ -601,18 +536,30 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
                 const int dy[4] = {0, 0, -1, 1};
                 for (int d = 0; d < 4; ++d) {
                     const int nx = cx + dx[d], ny = cy + dy[d];
-                    if (nx < worldX0 || nx >= worldX1 || ny < 0 || ny >= height - 3) continue;
-                    if (seen[at(nx, ny)] || world.at(nx, ny) != Mat::Air) continue;
+                    if (nx < winX0 || nx >= winX0 + winW || ny < 0 || ny >= rows) continue;
+                    if (seen[at(nx, ny)] || !mask[at(nx, ny)]) continue;
                     seen[at(nx, ny)] = 1;
                     stack.push_back(nx);
                     stack.push_back(ny);
                 }
             }
             if (piece.size() / 2 < static_cast<size_t>(kMinHole)) {
-                for (size_t i = 0; i < piece.size(); i += 2) world.set(piece[i], piece[i + 1], Mat::Stone);
+                for (size_t i = 0; i < piece.size(); i += 2) mask[at(piece[i], piece[i + 1])] = 0;
             }
         }
-    }
+
+    // Write this chunk's own columns. Water from the chunk's own ponds stays.
+    for (int x = ownX0; x < ownX0 + Chunk::WIDTH; ++x)
+        for (int y = 0; y < rows; ++y) {
+            if (!mask[at(x, y)]) continue;
+            if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
+            world.set(x, y, Mat::Air);
+        }
+}
+
+void carveCaves(World& world, int chunkStart, int chunkEnd) {
+    for (int chunk = chunkStart; chunk <= chunkEnd; ++chunk) {
+        if (world.hasChunk(chunk)) carveChunkCaves(world, chunk);
     }
 }
 

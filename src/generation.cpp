@@ -460,8 +460,9 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 // not on which other chunks happen to be built alongside it, so chunks agree
 // at their seams however they were batched. The cleanup steps look at a fixed
 // margin around the chunk, and the chunk writes only its own columns.
-constexpr float kProductThresholdSurface = 0.30f;
-constexpr float kProductThresholdDepth = 0.20f;
+constexpr float kProductThresholdSurface = 0.34f;
+constexpr float kProductThresholdDepth = 0.22f;
+constexpr float kCaveRampTop = 150.0f;   // absolute row where caves may start
 
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
@@ -477,7 +478,7 @@ void carveChunkCaves(World& world, int chunk) {
     std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
     for (int x = winX0; x < winX0 + winW; ++x) {
         const int surf = groundRow(x);
-        for (int y = surf + 20; y < height - 100 && y < rows; ++y) {
+        for (int y = surf + 12; y < height - 100 && y < rows; ++y) {
             // Density: the product of two independent 3D noise fields, each
             // taken as an absolute value. A cave forms only where both fields
             // are large at the same point, so the open space breaks into
@@ -494,7 +495,7 @@ void carveChunkCaves(World& world, int chunk) {
             const float v = small + (large - small) * blend;
             const float rough = noise2(fx * 0.9f, fy * 0.9f, kWorldSeed + 1300u);
             const float thresh = kProductThresholdSurface - kProductThresholdDepth *
-                                 std::min(1.0f, std::max(0.0f, (fy - 250.0f) / 750.0f));
+                                 std::min(1.0f, std::max(0.0f, (fy - kCaveRampTop) / 850.0f));
             if (v + (rough - 0.5f) * 0.10f > thresh) mask[at(x, y)] = 1;
         }
     }

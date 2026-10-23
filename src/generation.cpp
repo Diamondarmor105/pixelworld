@@ -631,8 +631,11 @@ void carveChunkCaves(World& world, int chunk) {
             // Carve any solid rock, not just stone: the deep layers are basalt
             // and obsidian, and caves must reach them too.
             const Mat m = world.at(x, y);
+            // Carve through every rock and loose material the strata can place,
+            // so the strata can never be left sitting inside a cave.
             if (m != Mat::Stone && m != Mat::Limestone && m != Mat::Basalt &&
-                m != Mat::Obsidian && m != Mat::PackedDirt && m != Mat::Gravel)
+                m != Mat::Obsidian && m != Mat::PackedDirt && m != Mat::Gravel &&
+                m != Mat::Clay && m != Mat::Sand && m != Mat::Mud)
                 continue;
             world.set(x, y, Mat::Air);
         }

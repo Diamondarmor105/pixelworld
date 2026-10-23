@@ -461,9 +461,9 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 // at their seams however they were batched. The cleanup steps look at a fixed
 // margin around the chunk, and the chunk writes only its own columns.
 // Shallow caves: small holes, fairly common near the surface.
-constexpr float kShallowThreshold = 0.15f;
+constexpr float kShallowThreshold = 0.14f;
 // Deep caves: larger holes, rarer, so the bar is higher.
-constexpr float kDeepThreshold = 0.25f;
+constexpr float kDeepThreshold = 0.24f;
 
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;

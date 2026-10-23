@@ -532,7 +532,7 @@ constexpr float kCaveWarp = 40.0f;
 
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
-    constexpr int kMinHole = 120;
+    constexpr int kMinHole = 30;
     const int height = world.height();
     const int ownX0 = chunk * Chunk::WIDTH;
     const int winX0 = ownX0 - kMargin;
@@ -540,38 +540,32 @@ void carveChunkCaves(World& world, int chunk) {
     const int rows = height - 3;
     auto at = [&](int x, int y) { return static_cast<size_t>(y) * winW + (x - winX0); };
 
-    // Raw carve mask: the strata approach, but used as a cave. The band value
-    // is a warped 2D noise that folds and tilts, so the cave walls are
-    // irregular and organic instead of smooth blobs. Carve where the band is
-    // high, with a depth-scaled threshold so caves are rarer near the surface.
+    // Independent warp + beds, in the style of the strata but with its own
+    // scales and seeds, so caves have the same irregular folded shape as the
+    // rock layers without copying them. The mask is computed first.
     std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
     for (int x = winX0; x < winX0 + winW; ++x) {
         const int surf = groundRow(x);
-        for (int y = surf + 12; y < height - 3 && y < rows; ++y) {
+        for (int y = surf + 12; y < rows; ++y) {
             const float fx = static_cast<float>(x);
             const float fy = static_cast<float>(y);
-            // The same warp as the strata, so the cave walls fold and tilt.
-            // Strata-like cave: the same warp family as the rock beds, but with
-            // its own scales, seeds and thresholds, so the cave walls fold and
-            // tilt the way rock does without copying the rock exactly.
-            const float qx = (fbm2(fx / 300.0f, fy / 240.0f, kWorldSeed + 910u, 2) - 0.5f) * 2.0f;
-            const float qy = (fbm2(fx / 300.0f, fy / 240.0f, kWorldSeed + 911u, 2) - 0.5f) * 2.0f;
-            const float rx = (fbm2((fx + qx * 60.0f) / 270.0f, (fy + qy * 60.0f) / 200.0f,
-                                    kWorldSeed + 912u, 2) - 0.5f) * 2.0f;
-            const float ry = (fbm2((fx - qy * 50.0f) / 270.0f, (fy - qx * 50.0f) / 200.0f,
-                                    kWorldSeed + 913u, 2) - 0.5f) * 2.0f;
-            const float beds = fbm2((fx + rx * 80.0f) / 240.0f,
-                                    (fy + ry * 80.0f) / 150.0f,
-                                    kWorldSeed + 931u, 3);
+            const float qx = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 950u, 2) - 0.5f) * 2.0f;
+            const float qy = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 951u, 2) - 0.5f) * 2.0f;
+            const float rx = (fbm2((fx + qx * 55.0f) / 250.0f, (fy + qy * 55.0f) / 190.0f,
+                                    kWorldSeed + 952u, 2) - 0.5f) * 2.0f;
+            const float ry = (fbm2((fx - qy * 45.0f) / 250.0f, (fy - qx * 45.0f) / 190.0f,
+                                    kWorldSeed + 953u, 2) - 0.5f) * 2.0f;
+            const float beds = fbm2((fx + rx * 75.0f) / 220.0f,
+                                    (fy + ry * 75.0f) / 140.0f,
+                                    kWorldSeed + 971u, 3);
             const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
             const float thresh = 0.78f - depthFactor * 0.16f;   // looser deep
             if (beds > thresh) mask[at(x, y)] = 1;
         }
     }
 
-    // Morphological opening: erode twice, then dilate twice, 4-way. Anything
-    // narrower than about five cells - the sheared slivers simplex noise leaves
-    // at small scales - cannot survive, while round holes keep their shape.
+    // Morphological opening: erode twice, then dilate twice, 4-way. Removes
+    // thin slivers while keeping round holes.
     auto step = [&](bool erode) {
         std::vector<uint8_t> next(mask.size(), 0);
         const int dx[4] = {-1, 1, 0, 0};
@@ -594,8 +588,8 @@ void carveChunkCaves(World& world, int chunk) {
     step(false);
     step(false);
 
-    // Fill pieces too small to be caves. Real holes are much larger than this.
-    std::vector<uint8_t> seen(mask.size(), 0);
+    // Fill pieces too small to be caves.
+    std::vector<uint8_t> seen(static_cast<size_t>(winW) * rows, 0);
     std::vector<int> stack;
     std::vector<int> piece;
     for (int x = winX0; x < winX0 + winW; ++x)
@@ -627,27 +621,18 @@ void carveChunkCaves(World& world, int chunk) {
             }
         }
 
-    // Write this chunk's own columns. Water from the chunk's own ponds stays.
+    // Write this chunk's own columns. Only rock becomes air; sand keeps support.
     for (int x = ownX0; x < ownX0 + Chunk::WIDTH; ++x)
         for (int y = 0; y < rows; ++y) {
             if (!mask[at(x, y)]) continue;
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
             if (world.at(x, y) == Mat::Sand) continue;
             if (y > 0 && world.at(x, y - 1) == Mat::Sand) continue;
-            // Only carve rock. If the cell is already Air (a cave from a
-            // neighbouring chunk's margin) leave it alone; if it is anything
-            // other than stone, leave it alone too.
             if (world.at(x, y) != Mat::Stone) continue;
             world.set(x, y, Mat::Air);
         }
 }
 
-
-// Natural arches: horizontal tunnels through the faces of steep cliffs. A
-// tunnel is an ellipse, centred a few rows below the cliff's top, so the rock
-// above it stays solid and reads as a bridge where the tunnel passes through.
-// Each chunk carves only its own columns, from the same hashed centres, so
-// arches agree across chunk borders.
 void carveCaves(World& world, int chunkStart, int chunkEnd) {
     for (int chunk = chunkStart; chunk <= chunkEnd; ++chunk) {
         if (world.hasChunk(chunk)) carveChunkCaves(world, chunk);

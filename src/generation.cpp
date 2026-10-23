@@ -637,6 +637,10 @@ void carveChunkCaves(World& world, int chunk) {
         for (int y = 0; y < rows; ++y) {
             if (!mask[at(x, y)]) continue;
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
+            // Loose sand must keep its support. Carving a cell that is sand, or
+            // that has sand directly above it, would let the sand fall in.
+            if (world.at(x, y) == Mat::Sand) continue;
+            if (y > 0 && world.at(x, y - 1) == Mat::Sand) continue;
             world.set(x, y, Mat::Air);
         }
 }
@@ -1112,7 +1116,7 @@ static Land landAt(int worldX) {
     if (biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f) {
         land.topMat = Mat::Sand;
         land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
-        land.dirtRows = 3;
+        land.dirtRows = 0;
     } else if (temp < 0.30f) {
         land.topMat = Mat::Snow;
     } else {
@@ -1317,6 +1321,19 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
+
+    // Loose sand must keep its support. Where the lava chamber or any other
+    // hollow opened up under a sand layer, make the sand's underside rock
+    // again, so the sand does not fall into the hollow.
+    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
+        for (int y = 1; y < height; ++y) {
+            const size_t cell = chunk.index(lx, y);
+            if (chunk.cells[cell] != static_cast<uint8_t>(Mat::Air)) continue;
+            if (chunk.cells[chunk.index(lx, y - 1)] != static_cast<uint8_t>(Mat::Sand)) continue;
+            chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
+            chunk.mass[cell] = 0.0f;
+        }
+    }
 }
 
 void generateChunksAround(World& world, int worldX, int radius) {

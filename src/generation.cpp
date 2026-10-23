@@ -467,16 +467,15 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
         for (int y = surf + 20; y < height - 100; ++y) {
             float depth = static_cast<float>(y - surf);
             float depthFactor = std::min(1.0f, std::max(0.0f, (depth - 20.0f) / 400.0f));
-            // Small caves near surface, larger deeper.
-            float scale = 15.0f + depthFactor * 30.0f;
-            if (scale > 50.0f) scale = 50.0f;
-            float n = noise2(static_cast<float>(x) / scale, static_cast<float>(y) / scale, kWorldSeed + 1200u) * 2.0f - 1.0f;
-            float ridged = std::fabs(n);
-            // Roughness: per-cell noise jitters the threshold for jagged walls.
+            // Swiss cheese: blobs of noise, carved where the noise peaks. Each
+            // blob stays separate, so caves do not join into a maze. Near the
+            // surface the noise must peak very high (rare, small holes); deeper
+            // the bar drops (more holes) and the noise scale grows (bigger holes).
+            float scale = 14.0f + depthFactor * 40.0f;
+            float v = noise2(static_cast<float>(x) / scale, static_cast<float>(y) / scale, kWorldSeed + 1200u);
             float rough = noise2(static_cast<float>(x) * 0.9f, static_cast<float>(y) * 0.9f, kWorldSeed + 1300u);
-            // Stricter near surface (fewer caves), looser deep.
-            float thresh = 0.10f + depthFactor * 0.08f;
-            if (ridged + (rough - 0.5f) * 0.15f < thresh) {
+            float thresh = 0.80f - depthFactor * 0.14f;
+            if (v + (rough - 0.5f) * 0.10f > thresh) {
                 if (world.at(x, y) != Mat::Water && world.at(x, y + 1) != Mat::Water) {
                     world.set(x, y, Mat::Air);
                 }
@@ -486,7 +485,7 @@ void carveCaves(World& world, int chunkStart, int chunkEnd) {
 
     // Remove tiny isolated pockets: flood-fill each air region and fill any
     // region smaller than kMinCave cells. What is left reads as caves, not dust.
-    constexpr int kMinCave = 12;
+    constexpr int kMinCave = 40;
     std::vector<uint8_t> seen(static_cast<size_t>(width) * height, 0);
     std::vector<int> stack;
     std::vector<int> region;

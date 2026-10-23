@@ -966,6 +966,19 @@ static Land landAt(int worldX) {
     land.dirtRows = high ? 1 + static_cast<int>(dirt * 5.0f)
                          : 12 + static_cast<int>(dirt * 26.0f);
 
+    // How steep the ground is here: rows of fall per column, measured over a
+    // few columns either side so one step does not count as a cliff.
+    const float slope = std::fabs(static_cast<float>(profileAt(worldX + 4) - profileAt(worldX - 4))) / 8.0f;
+    // Flat ground in a low valley collects deeper soil: the rain brings silt
+    // down and it settles. Both measures change smoothly, so the soil depth
+    // does not step from column to column.
+    const float flat = 1.0f - std::min(1.0f, std::max(0.0f, (slope - 0.2f) / 0.5f));
+    const float low = std::min(1.0f, std::max(0.0f, (static_cast<float>(profile) - 300.0f) / 80.0f));
+    if (!high) {
+        land.soilRows += static_cast<int>(std::lround(flat * low * 4.0f));
+        land.dirtRows += static_cast<int>(std::lround(flat * low * 14.0f));
+    }
+
     // What the ground surface is made of.
     //
     // A hot dry country is sand. A wet one is mud. A warm damp one is clay.
@@ -974,6 +987,12 @@ static Land landAt(int worldX) {
     if (high) {
         land.topMat = Mat::Stone;
         land.screeMat = Mat::Gravel;
+    } else if (slope > 0.9f) {
+        // A steep face has no soil on it: the weather strips it to rock and
+        // the loose rock slides down to the foot, whatever the climate is.
+        land.topMat = Mat::Stone;
+        land.screeMat = Mat::Gravel;
+        land.soilRows = 1;
     } else if (temp > 0.55f && moist > 0.70f) {
         land.topMat = Mat::Mycelium;
         land.screeMat = Mat::Gravel;

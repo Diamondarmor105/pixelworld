@@ -489,8 +489,8 @@ void carveChunkCaves(World& world, int chunk) {
             const float fx = static_cast<float>(x), fy = static_cast<float>(y);
             const float smallA = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 0.0f, kWorldSeed + 1200u) * 2.0f - 1.0f);
             const float smallB = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 37.0f, kWorldSeed + 1202u) * 2.0f - 1.0f);
-            const float largeA = std::fabs(noise3(fx / 56.0f, fy / 56.0f, 0.0f, kWorldSeed + 1201u) * 2.0f - 1.0f);
-            const float largeB = std::fabs(noise3(fx / 56.0f, fy / 56.0f, 37.0f, kWorldSeed + 1203u) * 2.0f - 1.0f);
+            const float largeA = std::fabs(noise3(fx / 100.0f, fy / 100.0f, 0.0f, kWorldSeed + 1201u) * 2.0f - 1.0f);
+            const float largeB = std::fabs(noise3(fx / 100.0f, fy / 100.0f, 37.0f, kWorldSeed + 1203u) * 2.0f - 1.0f);
             const float small = smallA * smallB;
             const float large = largeA * largeB;
             const float v = small + (large - small) * blend;

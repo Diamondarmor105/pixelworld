@@ -461,9 +461,9 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 // at their seams however they were batched. The cleanup steps look at a fixed
 // margin around the chunk, and the chunk writes only its own columns.
 // Shallow caves: small holes, fairly common near the surface.
-constexpr float kShallowThreshold = 0.14f;
+constexpr float kShallowThreshold = 0.13f;
 // Deep caves: larger holes, rarer, so the bar is higher.
-constexpr float kDeepThreshold = 0.24f;
+constexpr float kDeepThreshold = 0.23f;
 // How far the cave fields are pushed about, in cells (the domain warp).
 constexpr float kCaveWarp = 40.0f;
 
@@ -507,7 +507,7 @@ void carveChunkCaves(World& world, int chunk) {
             // it stops reading as a circle. It does not change the hole's size.
             const float edge = noise2(fx / 9.0f, fy / 9.0f, kWorldSeed + 1500u);
             const float thresh = kShallowThreshold + (kDeepThreshold - kShallowThreshold) * blend;
-            if (v + (rough - 0.5f) * 0.10f + (edge - 0.5f) * 0.16f > thresh) mask[at(x, y)] = 1;
+            if (v + (rough - 0.5f) * 0.10f + (edge - 0.5f) * 0.08f > thresh) mask[at(x, y)] = 1;
         }
     }
 

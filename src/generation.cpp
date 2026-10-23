@@ -540,36 +540,29 @@ void carveChunkCaves(World& world, int chunk) {
     const int rows = height - 3;
     auto at = [&](int x, int y) { return static_cast<size_t>(y) * winW + (x - winX0); };
 
-    // Raw carve mask over the window. Pure noise and ground height only.
+    // Raw carve mask: the strata approach, but used as a cave. The band value
+    // is a warped 2D noise that folds and tilts, so the cave walls are
+    // irregular and organic instead of smooth blobs. Carve where the band is
+    // high, with a depth-scaled threshold so caves are rarer near the surface.
     std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
     for (int x = winX0; x < winX0 + winW; ++x) {
         const int surf = groundRow(x);
         for (int y = surf + 12; y < height - 100 && y < rows; ++y) {
-            // Density: the product of two independent 3D noise fields, each
-            // taken as an absolute value. A cave forms only where both fields
-            // are large at the same point, so the open space breaks into
-            // separate pockets instead of one connected sheet. Two scales:
-            // small near the surface, large deeper, blended by absolute row.
-            const float blend = std::min(1.0f, std::max(0.0f, (static_cast<float>(y - surf) - 60.0f) / 200.0f));
-            const float fx = static_cast<float>(x), fy = static_cast<float>(y);
-            // Domain warp: the fields are read at points pushed about by a smooth
-            // offset that depends only on position. This bends each hole into an
-            // irregular outline (lobed, elongated, bent) instead of a circle.
-            const float warpX = (noise2(fx / 90.0f, fy / 90.0f, kWorldSeed + 1600u) - 0.5f) * 2.0f * kCaveWarp;
-            const float warpY = (noise2(fx / 90.0f, fy / 90.0f, kWorldSeed + 1601u) - 0.5f) * 2.0f * kCaveWarp;
-            const float wx = fx + warpX, wy = fy + warpY;
-            const float smallA = std::fabs(noise3(wx / 24.0f, wy / 24.0f, 0.0f, kWorldSeed + 1200u) * 2.0f - 1.0f);
-            const float smallB = std::fabs(noise3(wx / 24.0f, wy / 24.0f, 37.0f, kWorldSeed + 1202u) * 2.0f - 1.0f);
-            const float largeA = std::fabs(noise3(wx / 220.0f, wy / 220.0f, 0.0f, kWorldSeed + 1201u) * 2.0f - 1.0f);
-            const float largeB = std::fabs(noise3(wx / 220.0f, wy / 220.0f, 37.0f, kWorldSeed + 1203u) * 2.0f - 1.0f);
-            const float small = smallA * smallB;
-            const float large = largeA * largeB;
-            const float v = small + (large - small) * blend;
-            // Mid-scale edge detail: breaks the smooth outline of each hole so
-            // it stops reading as a circle. It does not change the hole's size.
-            const float edge = noise2(fx / 9.0f, fy / 9.0f, kWorldSeed + 1500u);
-            const float thresh = kShallowThreshold + (kDeepThreshold - kShallowThreshold) * blend;
-            if (v + (edge - 0.5f) * 0.08f > thresh) mask[at(x, y)] = 1;
+            const float fx = static_cast<float>(x);
+            const float fy = static_cast<float>(y);
+            // The same warp as the strata, so the cave walls fold and tilt.
+            const float qx = (fbm2(fx / 260.0f, fy / 200.0f, kWorldSeed + 10u, 2) - 0.5f) * 2.0f;
+            const float qy = (fbm2(fx / 260.0f, fy / 200.0f, kWorldSeed + 11u, 2) - 0.5f) * 2.0f;
+            const float rx = (fbm2((fx + qx * 50.0f) / 230.0f, (fy + qy * 50.0f) / 170.0f,
+                                    kWorldSeed + 12u, 2) - 0.5f) * 2.0f;
+            const float ry = (fbm2((fx - qy * 40.0f) / 230.0f, (fy - qx * 40.0f) / 170.0f,
+                                    kWorldSeed + 13u, 2) - 0.5f) * 2.0f;
+            const float beds = fbm2((fx + rx * 70.0f) / 200.0f,
+                                    (fy + ry * 70.0f) / 130.0f,
+                                    kWorldSeed + 31u, 3);
+            const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
+            const float thresh = 0.72f;   // constant: same shape at every depth
+            if (beds > thresh) mask[at(x, y)] = 1;
         }
     }
 

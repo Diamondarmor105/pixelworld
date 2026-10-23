@@ -460,6 +460,9 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 // not on which other chunks happen to be built alongside it, so chunks agree
 // at their seams however they were batched. The cleanup steps look at a fixed
 // margin around the chunk, and the chunk writes only its own columns.
+constexpr float kProductThresholdSurface = 0.30f;
+constexpr float kProductThresholdDepth = 0.20f;
+
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
     constexpr int kMinHole = 80;
@@ -475,17 +478,23 @@ void carveChunkCaves(World& world, int chunk) {
     for (int x = winX0; x < winX0 + winW; ++x) {
         const int surf = groundRow(x);
         for (int y = surf + 20; y < height - 100 && y < rows; ++y) {
-            // Two fixed-scale noise fields, one small and one large. Near the
-            // surface only the small one is used; deeper the large one takes
-            // over, so holes grow with depth. Each field keeps its own
-            // coordinates, so nothing is rescaled with depth and nothing stretches.
+            // Density: the product of two independent 3D noise fields, each
+            // taken as an absolute value. A cave forms only where both fields
+            // are large at the same point, so the open space breaks into
+            // separate pockets instead of one connected sheet. Two scales:
+            // small near the surface, large deeper, blended by absolute row.
             const float blend = std::min(1.0f, std::max(0.0f, (static_cast<float>(y) - 250.0f) / 600.0f));
             const float fx = static_cast<float>(x), fy = static_cast<float>(y);
-            const float small = noise2(fx / 24.0f, fy / 24.0f, kWorldSeed + 1200u);
-            const float large = noise2(fx / 56.0f, fy / 56.0f, kWorldSeed + 1201u);
+            const float smallA = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 0.0f, kWorldSeed + 1200u) * 2.0f - 1.0f);
+            const float smallB = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 37.0f, kWorldSeed + 1202u) * 2.0f - 1.0f);
+            const float largeA = std::fabs(noise3(fx / 56.0f, fy / 56.0f, 0.0f, kWorldSeed + 1201u) * 2.0f - 1.0f);
+            const float largeB = std::fabs(noise3(fx / 56.0f, fy / 56.0f, 37.0f, kWorldSeed + 1203u) * 2.0f - 1.0f);
+            const float small = smallA * smallB;
+            const float large = largeA * largeB;
             const float v = small + (large - small) * blend;
             const float rough = noise2(fx * 0.9f, fy * 0.9f, kWorldSeed + 1300u);
-            const float thresh = 0.90f - 0.20f * std::min(1.0f, std::max(0.0f, (fy - 250.0f) / 750.0f));
+            const float thresh = kProductThresholdSurface - kProductThresholdDepth *
+                                 std::min(1.0f, std::max(0.0f, (fy - 250.0f) / 750.0f));
             if (v + (rough - 0.5f) * 0.10f > thresh) mask[at(x, y)] = 1;
         }
     }

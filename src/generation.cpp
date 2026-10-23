@@ -464,6 +464,8 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 constexpr float kShallowThreshold = 0.14f;
 // Deep caves: larger holes, rarer, so the bar is higher.
 constexpr float kDeepThreshold = 0.24f;
+// How far the cave fields are pushed about, in cells (the domain warp).
+constexpr float kCaveWarp = 40.0f;
 
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
@@ -487,10 +489,16 @@ void carveChunkCaves(World& world, int chunk) {
             // small near the surface, large deeper, blended by absolute row.
             const float blend = std::min(1.0f, std::max(0.0f, (static_cast<float>(y - surf) - 60.0f) / 200.0f));
             const float fx = static_cast<float>(x), fy = static_cast<float>(y);
-            const float smallA = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 0.0f, kWorldSeed + 1200u) * 2.0f - 1.0f);
-            const float smallB = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 37.0f, kWorldSeed + 1202u) * 2.0f - 1.0f);
-            const float largeA = std::fabs(noise3(fx / 220.0f, fy / 220.0f, 0.0f, kWorldSeed + 1201u) * 2.0f - 1.0f);
-            const float largeB = std::fabs(noise3(fx / 220.0f, fy / 220.0f, 37.0f, kWorldSeed + 1203u) * 2.0f - 1.0f);
+            // Domain warp: the fields are read at points pushed about by a smooth
+            // offset that depends only on position. This bends each hole into an
+            // irregular outline (lobed, elongated, bent) instead of a circle.
+            const float warpX = (noise2(fx / 90.0f, fy / 90.0f, kWorldSeed + 1600u) - 0.5f) * 2.0f * kCaveWarp;
+            const float warpY = (noise2(fx / 90.0f, fy / 90.0f, kWorldSeed + 1601u) - 0.5f) * 2.0f * kCaveWarp;
+            const float wx = fx + warpX, wy = fy + warpY;
+            const float smallA = std::fabs(noise3(wx / 24.0f, wy / 24.0f, 0.0f, kWorldSeed + 1200u) * 2.0f - 1.0f);
+            const float smallB = std::fabs(noise3(wx / 24.0f, wy / 24.0f, 37.0f, kWorldSeed + 1202u) * 2.0f - 1.0f);
+            const float largeA = std::fabs(noise3(wx / 220.0f, wy / 220.0f, 0.0f, kWorldSeed + 1201u) * 2.0f - 1.0f);
+            const float largeB = std::fabs(noise3(wx / 220.0f, wy / 220.0f, 37.0f, kWorldSeed + 1203u) * 2.0f - 1.0f);
             const float small = smallA * smallB;
             const float large = largeA * largeB;
             const float v = small + (large - small) * blend;

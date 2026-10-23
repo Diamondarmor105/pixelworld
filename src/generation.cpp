@@ -460,9 +460,10 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
 // not on which other chunks happen to be built alongside it, so chunks agree
 // at their seams however they were batched. The cleanup steps look at a fixed
 // margin around the chunk, and the chunk writes only its own columns.
-constexpr float kProductThresholdSurface = 0.34f;
-constexpr float kProductThresholdDepth = 0.22f;
-constexpr float kCaveRampTop = 150.0f;   // absolute row where caves may start
+// Shallow caves: small holes, fairly common near the surface.
+constexpr float kShallowThreshold = 0.15f;
+// Deep caves: larger holes, rarer, so the bar is higher.
+constexpr float kDeepThreshold = 0.25f;
 
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
@@ -484,7 +485,7 @@ void carveChunkCaves(World& world, int chunk) {
             // are large at the same point, so the open space breaks into
             // separate pockets instead of one connected sheet. Two scales:
             // small near the surface, large deeper, blended by absolute row.
-            const float blend = std::min(1.0f, std::max(0.0f, (static_cast<float>(y) - 250.0f) / 600.0f));
+            const float blend = std::min(1.0f, std::max(0.0f, (static_cast<float>(y - surf) - 60.0f) / 200.0f));
             const float fx = static_cast<float>(x), fy = static_cast<float>(y);
             const float smallA = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 0.0f, kWorldSeed + 1200u) * 2.0f - 1.0f);
             const float smallB = std::fabs(noise3(fx / 24.0f, fy / 24.0f, 37.0f, kWorldSeed + 1202u) * 2.0f - 1.0f);
@@ -494,8 +495,7 @@ void carveChunkCaves(World& world, int chunk) {
             const float large = largeA * largeB;
             const float v = small + (large - small) * blend;
             const float rough = noise2(fx * 0.9f, fy * 0.9f, kWorldSeed + 1300u);
-            const float thresh = kProductThresholdSurface - kProductThresholdDepth *
-                                 std::min(1.0f, std::max(0.0f, (fy - kCaveRampTop) / 850.0f));
+            const float thresh = kShallowThreshold + (kDeepThreshold - kShallowThreshold) * blend;
             if (v + (rough - 0.5f) * 0.10f > thresh) mask[at(x, y)] = 1;
         }
     }

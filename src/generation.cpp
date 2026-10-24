@@ -311,6 +311,7 @@ struct Land {
     Mat topMat;     // what the ground surface is made of
     Mat screeMat;   // what the rubble is made of
     Mat bodyMat;    // what the topsoil body is made of (sand under a desert)
+    int skinRows;   // how many rows of the surface material lie under the top (grass)
     Mat altMat;     // the neighbouring biome's surface material, for the checker
     float altShare; // how much of the top layer takes altMat, 0..1
 };
@@ -444,7 +445,7 @@ static float readSample(const std::vector<float>& samples, int y) {
 // The climate decides what the rock is: a hot dry place lays down sand, a
 // warm wet one lays down clay, and a cold one lays down plain limestone.
 Mat layerMaterial(const Land& land, int depth, float band, float temp, float moist) {
-    if (depth <= 0) return land.topMat;
+    if (depth <= 0 || depth <= land.skinRows) return land.topMat;
     if (depth <= land.soilRows) return land.bodyMat;
     if (depth <= land.soilRows + land.dirtRows) return Mat::PackedDirt;
     // Thin beds of other rock in the stone. The band value is a sawtooth that
@@ -1274,6 +1275,7 @@ static Mat topMatFor(int biome, float temp) {
         case BiomeType::Volcanic: return Mat::Basalt;
         case BiomeType::Scrubland: return Mat::Gravel;
         case BiomeType::Hills: return Mat::Gravel;
+        case BiomeType::Plains: return temp < 0.30f ? Mat::Snow : Mat::Grass;
         case BiomeType::Mountains: return Mat::Stone;
         default: return temp < 0.30f ? Mat::Snow : Mat::Soil;
     }
@@ -1349,8 +1351,11 @@ Land landAt(int worldX) {
     }
     land.soilRows = static_cast<int>(std::lround(soilW * kSurfaceDepth));
     land.dirtRows = static_cast<int>(std::lround(dirtW * kSurfaceDepth));
-    land.bodyMat = biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f ? Mat::Sand : land.topMat;
-    land.screeMat = land.topMat;
+    // Grass is a skin over soil: the body beneath it is soil, not grass.
+    const Mat body = land.topMat == Mat::Grass ? Mat::Soil : land.topMat;
+    land.skinRows = land.topMat == Mat::Grass ? 3 : 0;
+    land.bodyMat = biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f ? Mat::Sand : body;
+    land.screeMat = body;
     return land;
 }
 
@@ -1482,7 +1487,8 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         float bw[kBiomeCount];
         biomeWeights(wx, smoothSurfaceRow(wx), bw);
         const float living = bw[static_cast<int>(BiomeType::Plains)] + bw[static_cast<int>(BiomeType::Hills)];
-        if (living < 0.3f || landAt(wx).topMat != Mat::Soil) continue;
+        const Mat ground = landAt(wx).topMat;
+        if (living < 0.3f || (ground != Mat::Soil && ground != Mat::Grass)) continue;
 
         bool clashes = false;
         for (const Footprint& f : footprints) {

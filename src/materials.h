@@ -24,6 +24,7 @@ enum class Mat : uint8_t {
     Obsidian,
     Bones,
     Soil,
+    Grass,       // the living top of the plains
     PackedDirt,
 
     // Loose solids — fall when unsupported and pile up.

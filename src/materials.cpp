@@ -25,6 +25,7 @@ static const MaterialInfo kMaterials[] = {
     /* Obsidian     */ {"Obsidian",     {  40,  32,  48, 255 }, 250, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 400, false},
     /* Bones        */ {"Bones",        { 226, 222, 200, 255 }, 200, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  90, true},
     /* Soil         */ {"Soil",         { 110,  80,  50, 255 }, 145, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  25, true},
+    /* Grass        */ {"Grass",        { 118, 184,  78, 255 }, 140, false, false,   0,   0, false, true,  10,  60, Mat::Ash,   false, Mat::Air,   false,  25, true},
     /* PackedDirt   */ {"Packed Dirt",  { 124,  88,  58, 255 }, 150, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  30, true},
     /* Sand         */ {"Sand",         { 232, 208, 140, 255 }, 160, true,  false,   0, 110, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  25, true},
     /* Gravel       */ {"Gravel",       { 150, 146, 140, 255 }, 170, true,  false,   0, 140, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  35, true},

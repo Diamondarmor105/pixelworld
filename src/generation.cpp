@@ -341,7 +341,7 @@ constexpr float kWorldScale = 1.6f;
 constexpr float kHeightScale = 1.5f;
 // How deep the surface layers go: the topsoil and the packed dirt under it are
 // this many times their original depth, before the rock starts.
-constexpr float kSurfaceDepth = 2.0f;
+constexpr float kSurfaceDepth = 3.0f;
 
 static float climateTemperature(int worldX, int worldY) {
     const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);

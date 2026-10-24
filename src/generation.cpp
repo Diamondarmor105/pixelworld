@@ -521,7 +521,11 @@ void drawPattern(Chunk& chunk, const StructurePattern& pattern, int baseX, int b
             if (localX < 0 || localX >= Chunk::WIDTH) continue;
             const Mat m = structureMaterial(line[column]);
             if (m == Mat::Air) continue;
+            // A structure stands in the air. Where the ground rises above its
+            // base, its upper rows would sit inside the soil, so they are left
+            // out rather than cut into the ground as rock.
             const size_t cell = chunk.index(localX, y);
+            if (chunk.cells[cell] != static_cast<uint8_t>(Mat::Air)) continue;
             chunk.cells[cell] = static_cast<uint8_t>(m);
             chunk.mass[cell] = isMobile(m) ? 1.0f : 0.0f;
         }
@@ -1267,6 +1271,23 @@ static int smoothSurfaceRow(int worldX) {
     return total / (2 * kHalf + 1);
 }
 
+// Bare rock, as opposed to soil, sand, snow and the other loose or living
+// surfaces.
+static bool isRockMat(Mat m) {
+    switch (m) {
+        case Mat::Stone:
+        case Mat::Limestone:
+        case Mat::Granite:
+        case Mat::Marble:
+        case Mat::Basalt:
+        case Mat::Obsidian:
+        case Mat::Sandstone:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // The top material a biome gives the ground surface.
 static Mat topMatFor(int biome, float temp) {
     switch (static_cast<BiomeType>(biome)) {
@@ -1320,6 +1341,9 @@ Land landAt(int worldX) {
     land.altShare = std::min(1.0f, std::max(0.0f, (share - 0.42f) / 0.16f));
     land.topMat = topMatFor(dom, temp);
     land.altMat = topMatFor(sec, temp);
+    // The checker only mixes soft surfaces. A neighbour's bare rock would
+    // otherwise show up as stone inside the topsoil of the next biome.
+    if (isRockMat(land.topMat) || isRockMat(land.altMat)) land.altShare = 0.0f;
 
     // Layer depths are a weighted average over every biome, so no single biome
     // "wins" a depth: the sand, snow and basalt layers thin out smoothly across

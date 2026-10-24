@@ -1176,16 +1176,17 @@ static int smoothSurfaceRow(int worldX) {
 static int rawSurfaceBiome(int worldX) {
     float w[kBiomeCount];
     biomeWeights(worldX, smoothSurfaceRow(worldX), w);
-    int dom = 0;
-    for (int i = 1; i < kBiomeCount; ++i) if (w[i] > w[dom]) dom = i;
-    int sec = dom == 0 ? 1 : 0;
-    for (int i = 0; i < kBiomeCount; ++i)
-        if (i != dom && w[i] > w[sec]) sec = i;
-    const float share = w[sec] / (w[dom] + w[sec] + 1e-6f);
-    const float blendP = std::min(1.0f, std::max(0.0f, (share - 0.2f) / 0.3f));
-    // Sampled at a fixed row on a long scale, so the patches change slowly.
-    const float patch = noise2(static_cast<float>(worldX) / 160.0f, static_cast<float>(kSeaRow) / 160.0f, kWorldSeed + 75u);
-    return patch < blendP ? sec : dom;
+    // A slow 2D value decides the pick. Walking the biomes and taking the first
+    // whose running total passes it gives each biome a share of the patches
+    // equal to its weight: deep in a biome it is always picked, and across a
+    // border the two blend in patches whose mix follows the weights.
+    const float u = noise2(static_cast<float>(worldX) / 120.0f, static_cast<float>(kSeaRow) / 120.0f, kWorldSeed + 75u);
+    float running = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) {
+        running += w[i];
+        if (u < running) return i;
+    }
+    return kBiomeCount - 1;
 }
 
 // The surface biome after a majority vote over the columns either side, so no

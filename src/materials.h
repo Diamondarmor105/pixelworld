@@ -17,6 +17,7 @@ enum class Mat : uint8_t {
     Bedrock,
     Stone,
     Limestone,
+    Sandstone,
     Basalt,
     Obsidian,
     Bones,

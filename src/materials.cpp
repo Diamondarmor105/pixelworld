@@ -18,6 +18,7 @@ static const MaterialInfo kMaterials[] = {
     /* Bedrock      */ {"Bedrock",      {  58,  58,  66, 255 }, 255, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 9999, false},
     /* Stone        */ {"Stone",        { 130, 130, 138, 255 }, 250, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 120, true},
     /* Limestone    */ {"Limestone",    { 196, 190, 170, 255 }, 230, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 140, true},
+    /* Sandstone    */ {"Sandstone",    { 210, 180, 120, 255 }, 220, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 120, true},
     /* Basalt       */ {"Basalt",       {  78,  80,  92, 255 }, 245, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 320, false},
     /* Obsidian     */ {"Obsidian",     {  40,  32,  48, 255 }, 250, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false, 400, false},
     /* Bones        */ {"Bones",        { 226, 222, 200, 255 }, 200, false, false,   0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,  90, true},

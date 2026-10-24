@@ -457,8 +457,8 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
         return Mat::Limestone;                                  // pale beds
     }
     // Sandstone-like bands in dry regions.
-    if (band > 0.40f && band < 0.46f && moist < 0.45f) return Mat::Sand;
-    if (band > 0.62f && band < 0.66f && moist < 0.42f && temp > 0.45f) return Mat::Sand;
+    if (band > 0.40f && band < 0.46f && moist < 0.45f) return Mat::Sandstone;
+    if (band > 0.62f && band < 0.66f && moist < 0.42f && temp > 0.45f) return Mat::Sandstone;
     if (band > 0.74f && band < 0.77f) return Mat::Gravel;
     return Mat::Stone;
 }
@@ -910,8 +910,8 @@ static float shapeWave(float x, float wavelength, uint32_t seed, int octaves) {
 // Each biome sits at a point on a low-frequency zone map. Where two biomes
 // meet, their heights are blended by weight across the overlap, so there is
 // no cliff at a biome border.
-enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3, Desert = 4 };
-constexpr int kBiomeCount = 5;
+enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3, Desert = 4, Tundra = 5, Volcanic = 6 };
+constexpr int kBiomeCount = 7;
 // The first four biomes are placed on the zone map; the desert is placed by
 // temperature instead, so it appears where the country is hot.
 constexpr int kZoneBiomes = 4;
@@ -932,12 +932,16 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     }
     for (int i = 0; i < kZoneBiomes; ++i) out[i] /= sum;
 
-    // The desert takes over where the temperature is high, and the zone
-    // biomes give way to it in proportion.
     const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX) - 0.55f) / 0.12f));
     const float desert = hot * hot * (3.0f - 2.0f * hot);
-    for (int i = 0; i < kZoneBiomes; ++i) out[i] *= (1.0f - desert);
+    const float cold = std::min(1.0f, std::max(0.0f, (0.35f - climateTemperature(worldX)) / 0.12f));
+    const float tundra = cold * cold * (3.0f - 2.0f * cold);
+    const float mountain = mountainHeightAt(worldX);
+    const float volcanic = hot * std::min(1.0f, std::max(0.0f, (mountain - 0.3f) / 0.3f));
+    for (int i = 0; i < kZoneBiomes; ++i) out[i] *= (1.0f - desert - tundra - volcanic);
     out[kZoneBiomes] = desert;
+    out[kZoneBiomes + 1] = tundra;
+    out[kZoneBiomes + 2] = volcanic;
 }
 
 // The height offset (in rows, positive is lower) one biome gives a column.
@@ -971,6 +975,14 @@ static float biomeOffset(BiomeType biome, float x) {
                 ? 45.0f * (phase / kCrest) * (phase / kCrest)
                 : 45.0f * (1.0f - (phase - kCrest) / (1.0f - kCrest));
             return dune + shapeWave(x, 40.0f, kWorldSeed + 80u, 1) * 3.0f;
+        }
+        case BiomeType::Tundra: {
+            const float hills = shapeWave(x, 600.0f, kWorldSeed + 90u, 2);
+            return -hills * 20.0f;
+        }
+        case BiomeType::Volcanic: {
+            const float crest = ridged1(x / 800.0f, kWorldSeed + 95u, 3);
+            return -crest * 120.0f;
         }
         case BiomeType::Canyons: {
             // Trenches: the absolute value of a wave cuts a V-shaped valley
@@ -1098,6 +1110,14 @@ static Land landAt(int worldX) {
         land.topMat = Mat::Sand;
         land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
         land.dirtRows = 0;
+    } else if (biomeW[static_cast<int>(BiomeType::Tundra)] > 0.5f) {
+        land.topMat = Mat::Snow;
+        land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f);
+        land.dirtRows = 4 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
+    } else if (biomeW[static_cast<int>(BiomeType::Volcanic)] > 0.5f) {
+        land.topMat = Mat::Basalt;
+        land.soilRows = 1;
+        land.dirtRows = 2;
     } else if (temp < 0.30f) {
         land.topMat = Mat::Snow;
     } else {

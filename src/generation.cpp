@@ -1175,7 +1175,16 @@ static Land landAt(int worldX) {
     // blend, so the two surfaces interleave in a mixed band, not a straight line.
     const float jit = noise1(x / 9.0f, kWorldSeed + 70u);
     const float jit2 = noise1(x / 13.0f, kWorldSeed + 71u);
-    auto beats = [&](BiomeType bt, float j) { return biomeW[static_cast<int>(bt)] > j; };
+    // How strongly this column is mixed: 0 deep inside one biome, 1 where
+    // several share it equally. The jitter is squeezed toward the middle where
+    // one biome dominates, so patches of a neighbour only show mid-border.
+    float maxW = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) maxW = std::max(maxW, biomeW[i]);
+    const float mix = std::min(1.0f, std::max(0.0f, (1.0f - maxW) * 2.0f));
+    auto beats = [&](BiomeType bt, float j) {
+        const float t = 0.5f + (j - 0.5f) * mix;
+        return biomeW[static_cast<int>(bt)] > t;
+    };
     if (beats(BiomeType::Desert, jit)) {
         land.topMat = Mat::Sand;
         land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);

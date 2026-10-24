@@ -317,10 +317,13 @@ struct Land {
 // strips. Temperature falls with height above sea level, so highlands are
 // colder. The seed shifts the whole map, so every world has its own climate.
 constexpr int kSeaRow = 330;   // the row of sea level
+// How large the biomes are: every climate and zone feature is this many times
+// wider than before.
+constexpr float kBiomeScale = 1.8f;
 
 static float climateTemperature(int worldX, int worldY) {
     const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);
-    const float field = fbm2(fx / 1400.0f, fy / 1000.0f, kWorldSeed + 201u, 3) - 0.5f;
+    const float field = fbm2(fx / (1400.0f * kBiomeScale), fy / (1000.0f * kBiomeScale), kWorldSeed + 201u, 3) - 0.5f;
     const float shift = (hash01(0, 7, static_cast<int>(kWorldSeed) + 1803) - 0.5f) * 0.2f;
     const float altitude = std::max(0.0f, static_cast<float>(kSeaRow) - fy);
     return std::min(1.0f, std::max(0.0f, 0.5f + field * 1.8f + shift - altitude / 1200.0f));
@@ -328,7 +331,7 @@ static float climateTemperature(int worldX, int worldY) {
 
 static float climateMoisture(int worldX, int worldY) {
     const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);
-    const float field = fbm2(fx / 1200.0f, fy / 900.0f, kWorldSeed + 211u, 3) - 0.5f;
+    const float field = fbm2(fx / (1200.0f * kBiomeScale), fy / (900.0f * kBiomeScale), kWorldSeed + 211u, 3) - 0.5f;
     return std::min(1.0f, std::max(0.0f, 0.5f + field * 1.8f));
 }
 
@@ -929,7 +932,7 @@ constexpr float kBiomeReach = 0.12f;   // how far a biome's influence spreads on
 // biome always applies and the blend has no gaps, however the zone map varies.
 // The weights sum to 1.
 static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
-    const float zone = fbm1(static_cast<float>(worldX) / 4000.0f, kWorldSeed + 500u, 2);
+    const float zone = fbm1(static_cast<float>(worldX) / (4000.0f * kBiomeScale), kWorldSeed + 500u, 2);
     float sum = 0.0f;
     for (int i = 0; i < kZoneBiomes; ++i) {
         const float d = (zone - kBiomeCentre[i]) / kBiomeReach;
@@ -943,7 +946,7 @@ static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
     const float cold = std::min(1.0f, std::max(0.0f, (0.27f - climateTemperature(worldX, worldY)) / 0.10f));
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
     // Volcanic country: patches of hot ground where a 2D noise runs high.
-    const float volcanicNoise = fbm2(static_cast<float>(worldX) / 900.0f, static_cast<float>(worldY) / 700.0f, kWorldSeed + 950u, 2);
+    const float volcanicNoise = fbm2(static_cast<float>(worldX) / (900.0f * kBiomeScale), static_cast<float>(worldY) / (700.0f * kBiomeScale), kWorldSeed + 950u, 2);
     // Volcanic ground sits in the warm band just below the desert, so the two
     // can win in different places instead of the desert always taking over.
     const float warm = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.42f) / 0.15f));

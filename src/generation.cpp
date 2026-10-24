@@ -1170,23 +1170,29 @@ static Land landAt(int worldX) {
     // The desert is dune sand: a deep layer over a thin dirt floor.
     float biomeW[kBiomeCount];
     biomeWeights(worldX, biomeW);
-    if (biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f) {
+    // Biome transitions: each column draws a jittered threshold and takes the
+    // first biome whose weight beats it. Where two biomes meet their weights
+    // blend, so the two surfaces interleave in a mixed band, not a straight line.
+    const float jit = noise1(x / 9.0f, kWorldSeed + 70u);
+    const float jit2 = noise1(x / 13.0f, kWorldSeed + 71u);
+    auto beats = [&](BiomeType bt, float j) { return biomeW[static_cast<int>(bt)] > j; };
+    if (beats(BiomeType::Desert, jit)) {
         land.topMat = Mat::Sand;
         land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
         land.dirtRows = 0;
-    } else if (biomeW[static_cast<int>(BiomeType::Tundra)] > 0.5f) {
+    } else if (beats(BiomeType::Tundra, jit2)) {
         land.topMat = Mat::Snow;
         land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f);
         land.dirtRows = 4 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
-    } else if (biomeW[static_cast<int>(BiomeType::Volcanic)] > 0.5f) {
+    } else if (beats(BiomeType::Volcanic, jit)) {
         land.topMat = Mat::Basalt;
         land.soilRows = 1;
         land.dirtRows = 2;
-    } else if (biomeW[static_cast<int>(BiomeType::Hills)] > 0.5f) {
+    } else if (beats(BiomeType::Hills, jit2)) {
         land.topMat = Mat::Gravel;
         land.soilRows = 2 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
         land.dirtRows = 8 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f);
-    } else if (biomeW[static_cast<int>(BiomeType::Mountains)] > 0.5f) {
+    } else if (beats(BiomeType::Mountains, jit)) {
         land.topMat = Mat::Stone;
         land.soilRows = 1;
         land.dirtRows = 2;

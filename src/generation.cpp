@@ -1299,6 +1299,60 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
+
+    // Vegetation: trees, bushes and fallen logs stand on the soil of the
+    // plains and hills. Each chunk picks its own few, and each stays inside the
+    // chunk so no seam shows.
+    struct Footprint {
+        int left;
+        int right;
+    };
+    std::vector<Footprint> footprints;
+    for (int i = 0; i < 6; ++i) {
+        const int kind = static_cast<int>(hash01(index, i, 121) * structureKindCount()) % structureKindCount();
+        const int variant = static_cast<int>(hash01(index, i, 122) * 8.0f);
+        const StructurePattern& pattern = structurePattern(kind, variant);
+        const int patternWidth = structurePatternWidth(pattern);
+        const int patternHeight = pattern.rowCount;
+        if (patternWidth <= 0 || patternWidth >= Chunk::WIDTH - 12) continue;
+
+        const int room = Chunk::WIDTH - 12 - patternWidth;
+        const int lx = 6 + static_cast<int>(hash01(index, i, 123) * static_cast<float>(room));
+        const int wx = baseX + lx;
+
+        // Only on the living ground of the plains and hills: no trees in the
+        // desert, the tundra, the volcanic country or on bare rock.
+        float bw[kBiomeCount];
+        biomeWeights(wx, bw);
+        const float living = bw[static_cast<int>(BiomeType::Plains)] + bw[static_cast<int>(BiomeType::Hills)];
+        if (living < 0.3f || landAt(wx).topMat != Mat::Soil) continue;
+
+        bool clashes = false;
+        for (const Footprint& f : footprints) {
+            if (lx + patternWidth - 1 >= f.left && lx <= f.right) clashes = true;
+        }
+        if (clashes) continue;
+
+        // Stand on the lowest ground under the footprint, so nothing hangs.
+        int base = 0;
+        for (int dx = 0; dx < patternWidth; ++dx) base = std::max(base, groundRow(baseX + lx + dx));
+        base = std::min(base, height - patternHeight - 1);
+        if (base < patternHeight) continue;
+
+        drawPattern(chunk, pattern, lx, base - 1);
+        footprints.push_back({lx, lx + patternWidth - 1});
+
+        if (placements) {
+            StructurePlacement placement;
+            placement.x = baseX + lx;
+            placement.y = base - 1;
+            placement.width = patternWidth;
+            placement.height = patternHeight;
+            placement.kind = kind;
+            placement.variant = variant;
+            placements->push_back(placement);
+        }
+    }
 }
 
 void generateChunksAround(World& world, int worldX, int radius) {

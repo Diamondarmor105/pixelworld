@@ -1809,22 +1809,18 @@ int main(int argc, char** argv) {
     bool smoke = false;
     bool selftest = false;
     bool shot = false;
-    uint32_t seed = 0;
+    uint32_t seed = 0;   // randomized below: every launch makes a new world
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--selftest") == 0) selftest = true;
         else if (std::strcmp(argv[i], "--smoke") == 0) smoke = true;
         else if (std::strcmp(argv[i], "--shot") == 0) shot = true;
-        else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) { seed = static_cast<uint32_t>(std::stoul(argv[++i])); }
     }
 
-    // If --shot has a trailing seed argument, use it.
-    if (shot && argc > 7) seed = static_cast<uint32_t>(std::stoul(argv[7]));
-    // Randomize the world seed unless one was given.
-    if (seed == 0) {
-        std::random_device rd;
-        seed = rd();
-    }
+    // Every launch generates a new world: the seed is random, as there is no
+    // saving system yet.
+    std::random_device rd;
+    seed = rd();
     setWorldSeed(seed);
     std::printf("world seed: %u\n", seed);
 

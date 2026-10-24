@@ -1329,7 +1329,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             const size_t cell = chunk.index(lx, y);
             chunk.cells[cell] = static_cast<uint8_t>(m);
             chunk.life[cell] = 0;
-            chunk.mass[cell] = 0.0f;
+            chunk.mass[cell] = isMobile(m) ? 1.0f : 0.0f;
         }
     }
 

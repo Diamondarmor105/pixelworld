@@ -1114,7 +1114,13 @@ static float profileHeight(int worldX) {
         offset += w[i] * biomeOffset(static_cast<BiomeType>(i), x);
     }
 
-    return 330.0f - swell * 190.0f + offset + eroded;
+    // Continents: a very slow noise (thousands of columns across) raises broad
+    // highlands and sinks broad basins. The basins are flattened into wide,
+    // level floors. There is no water in them.
+    const float cont = fbm1(x0 / 12000.0f, kWorldSeed + 1100u, 3) - 0.5f;
+    const float basin = std::min(1.0f, std::max(0.0f, (-cont - 0.06f) / 0.12f));
+    return 330.0f - swell * 190.0f + offset * (1.0f - 0.75f * basin) + eroded
+         - cont * 180.0f + basin * 35.0f;
 }
 
 // The height of the ground at a column, remembered.

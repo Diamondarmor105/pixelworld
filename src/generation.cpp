@@ -864,6 +864,8 @@ constexpr float kScreeRepose = 0.67f;
 // The height of the mountain at a column, before it is smoothed.
 // Width of a fault block in columns, and of the mountain range fault blocks.
 constexpr float kFaultBlock = 900.0f;
+// Width of a tectonic plate cell in columns.
+constexpr float kPlateWidth = 1500.0f;
 
 static float rawMountainHeightAt(int worldX) {
     const float x = static_cast<float>(worldX);
@@ -881,7 +883,23 @@ static float rawMountainHeightAt(int worldX) {
     constexpr float kFace = 0.40f;
     const float face = std::min(1.0f, f / kFace);
     const float rise = face * face * (3.0f - 2.0f * face);
-    const float crest = blockHeight * rise * std::pow(1.0f - f, 2.5f);
+    float crest = blockHeight * rise * std::pow(1.0f - f, 2.5f);
+
+    // Tectonic plates: the world is cut into plates along x, each with a random
+    // point. Where two neighbouring points are almost equally near, the column
+    // lies on a seam between plates, and the range rises there.
+    const float plateCell = kPlateWidth;
+    const int pc = static_cast<int>(std::floor(x / plateCell));
+    float nearest = 1e9f;
+    float second = 1e9f;
+    for (int c = pc - 1; c <= pc + 1; ++c) {
+        const float point = (static_cast<float>(c) + hash01(c, 0, static_cast<int>(kWorldSeed) + 1110)) * plateCell;
+        const float d = std::fabs(x - point);
+        second = d < nearest ? nearest : std::min(second, d);
+        nearest = std::min(nearest, d);
+    }
+    const float seamness = 1.0f - std::min(1.0f, (second - nearest) / (0.35f * plateCell));
+    crest *= 0.35f + 0.65f * seamness * seamness;
 
     // Where the ranges are. Most of the world has none: the ranges cross it
     // now and then, with wide plains between them.
@@ -951,7 +969,10 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
     const float volcanicNoise = fbm1(static_cast<float>(worldX) / 1200.0f, kWorldSeed + 950u, 2);
     const float volcanic = hot * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.30f) / 0.20f));
-    for (int i = 0; i < kZoneBiomes; ++i) out[i] *= (1.0f - desert - tundra - volcanic);
+    // Never negative: where the special biomes together cover everything, the
+    // zone biomes simply step aside.
+    const float zoneShare = std::max(0.0f, 1.0f - desert - tundra - volcanic);
+    for (int i = 0; i < kZoneBiomes; ++i) out[i] *= zoneShare;
     out[kZoneBiomes] = desert;
     out[kZoneBiomes + 1] = tundra;
     out[kZoneBiomes + 2] = volcanic;
@@ -961,6 +982,7 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     out[kZoneBiomes + 3] = 4.0f * out[kZoneBiomes] * out[static_cast<int>(BiomeType::Plains)];
     float total = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) total += out[i];
+    if (total <= 1e-6f) { out[static_cast<int>(BiomeType::Plains)] = 1.0f; return; }
     for (int i = 0; i < kBiomeCount; ++i) out[i] /= total;
 }
 

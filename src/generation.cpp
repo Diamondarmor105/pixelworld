@@ -1159,11 +1159,21 @@ int screeRowsAt(int worldX) {
 // The land at one column: where the ground starts, how deep the layers under
 // it go, how much snow lies on top of it, and what the weather has left on
 // the surface.
+// The ground row averaged over nearby columns. The biome map is read at this
+// row rather than the exact ground, so small bumps in the terrain cannot flip
+// the climate (and with it the biome) from one column to the next.
+static int smoothSurfaceRow(int worldX) {
+    constexpr int kHalf = 24;
+    int total = 0;
+    for (int k = -kHalf; k <= kHalf; ++k) total += profileAt(worldX + k);
+    return total / (2 * kHalf + 1);
+}
+
 // The biome a column's surface follows before smoothing: the strongest biome,
 // with the second-strongest taking over in patches near a border.
 static int rawSurfaceBiome(int worldX) {
     float w[kBiomeCount];
-    biomeWeights(worldX, profileAt(worldX), w);
+    biomeWeights(worldX, smoothSurfaceRow(worldX), w);
     int dom = 0;
     for (int i = 1; i < kBiomeCount; ++i) if (w[i] > w[dom]) dom = i;
     int sec = dom == 0 ? 1 : 0;
@@ -1198,7 +1208,7 @@ static Land landAt(int worldX) {
     // steep-face or hollow rules. What it is made of depends only on the
     // climate of the province it is in.
     const int profile = profileAt(worldX);
-    const float temp = climateTemperature(worldX, profile);
+    const float temp = climateTemperature(worldX, smoothSurfaceRow(worldX));
 
     land.profile = profile;
     land.surface = profile;
@@ -1211,7 +1221,7 @@ static Land landAt(int worldX) {
     // Cold country is snow, hot country is sand, everything else is dirt.
     // The desert is dune sand: a deep layer over a thin dirt floor.
     float biomeW[kBiomeCount];
-    biomeWeights(worldX, profile, biomeW);
+    biomeWeights(worldX, smoothSurfaceRow(worldX), biomeW);
     // The surface is the biome with the largest weight on the 2D climate map.
     // Borders fall along the smooth contours of that map, not in strips.
     const int chosen = majoritySurfaceBiome(worldX);
@@ -1372,7 +1382,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         // Only on the living ground of the plains and hills: no trees in the
         // desert, the tundra, the volcanic country or on bare rock.
         float bw[kBiomeCount];
-        biomeWeights(wx, profileAt(wx), bw);
+        biomeWeights(wx, smoothSurfaceRow(wx), bw);
         const float living = bw[static_cast<int>(BiomeType::Plains)] + bw[static_cast<int>(BiomeType::Hills)];
         if (living < 0.3f || landAt(wx).topMat != Mat::Soil) continue;
 

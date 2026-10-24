@@ -1373,6 +1373,13 @@ Land landAt(int worldX) {
         soilW += biomeW[i] * soilOf[i];
         dirtW += biomeW[i] * dirtOf[i];
     }
+    // In the heart of a desert the sand is full depth and there is no dirt, so
+    // neighbouring rock cannot push up through it. The blend only starts once
+    // the desert is strong, so the edges still fade.
+    const float desertW = biomeW[static_cast<int>(BiomeType::Desert)];
+    const float inDesert = std::min(1.0f, std::max(0.0f, (desertW - 0.3f) / 0.4f));
+    soilW = std::max(soilW, inDesert * soilOf[static_cast<int>(BiomeType::Desert)]);
+    dirtW *= 1.0f - inDesert;
     land.soilRows = static_cast<int>(std::lround(soilW * kSurfaceDepth));
     land.dirtRows = static_cast<int>(std::lround(dirtW * kSurfaceDepth));
     // Grass is a skin over soil: the body beneath it is soil, not grass.

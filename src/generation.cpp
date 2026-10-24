@@ -934,7 +934,7 @@ static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
     // Volcanic ground sits in the warm band just below the desert, so the two
     // can win in different places instead of the desert always taking over.
     const float warm = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.42f) / 0.15f));
-    const float volcanic = warm * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.45f) / 0.15f));
+    const float volcanic = warm * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.45f) / 0.15f)) * (1.0f - desert);
     // Never negative: where the special biomes together cover everything, the
     // zone biomes simply step aside.
     const float zoneShare = std::max(0.0f, 1.0f - desert - tundra - volcanic);
@@ -1180,10 +1180,20 @@ static int rawSurfaceBiome(int worldX) {
     // whose running total passes it gives each biome a share of the patches
     // equal to its weight: deep in a biome it is always picked, and across a
     // border the two blend in patches whose mix follows the weights.
-    const float u = noise2(static_cast<float>(worldX) / 120.0f, static_cast<float>(kSeaRow) / 120.0f, kWorldSeed + 75u);
+    // The weights are sharpened first: raised to a high power, a strong biome
+    // takes nearly every column in its core, and only where two biomes are
+    // close in strength do their shares mix, in a checker of noise patches.
+    float sharp[kBiomeCount];
+    float total = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) {
+        sharp[i] = std::pow(std::max(0.0f, w[i]), 8.0f);
+        total += sharp[i];
+    }
+    if (total <= 0.0f) return static_cast<int>(BiomeType::Plains);
+    const float u = noise2(static_cast<float>(worldX) / 40.0f, static_cast<float>(kSeaRow) / 40.0f, kWorldSeed + 75u) * total;
     float running = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) {
-        running += w[i];
+        running += sharp[i];
         if (u < running) return i;
     }
     return kBiomeCount - 1;

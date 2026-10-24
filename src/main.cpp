@@ -1818,6 +1818,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) { seed = static_cast<uint32_t>(std::stoul(argv[++i])); }
     }
 
+    // If --shot has a trailing seed argument, use it.
+    if (shot && argc > 7) seed = static_cast<uint32_t>(std::stoul(argv[7]));
     // Randomize the world seed unless one was given.
     if (seed == 0) {
         std::random_device rd;

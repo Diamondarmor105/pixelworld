@@ -467,6 +467,9 @@ Mat layerMaterial(const Land& land, int depth, float band, float temp, float moi
     if (band > 0.40f && band < 0.46f && moist < 0.45f) return Mat::Sandstone;
     if (band > 0.62f && band < 0.66f && moist < 0.42f && temp > 0.45f) return Mat::Sandstone;
     if (band > 0.74f && band < 0.77f) return Mat::Gravel;
+    // Granite: hard crystalline beds in the deeper rock; marble where it is hot.
+    if (depth > 400 && band > 0.10f && band < 0.14f) return Mat::Granite;
+    if (temp > 0.50f && band > 0.30f && band < 0.33f) return Mat::Marble;
     return Mat::Stone;
 }
 
@@ -943,7 +946,6 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     const float desert = hot * hot * (3.0f - 2.0f * hot);
     const float cold = std::min(1.0f, std::max(0.0f, (0.35f - climateTemperature(worldX)) / 0.12f));
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
-    const float mountain = mountainHeightAt(worldX);
     const float volcanicNoise = fbm1(static_cast<float>(worldX) / 1200.0f, kWorldSeed + 950u, 2);
     const float volcanic = hot * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.30f) / 0.20f));
     for (int i = 0; i < kZoneBiomes; ++i) out[i] *= (1.0f - desert - tundra - volcanic);
@@ -953,50 +955,77 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
 }
 
 // The height offset (in rows, positive is lower) one biome gives a column.
+// A smooth bump: 1 at its centre, falling linearly to 0 at `reach`.
+static float tent(float d, float reach) {
+    return std::max(0.0f, 1.0f - std::fabs(d) / reach);
+}
+
+// Scattered bumps (or hollows) placed one per cell of `cell` columns. Each
+// cell's bump is summed with its neighbours', so the result is continuous
+// across cell borders. `salt` picks which bumps these are.
+static float scatter(float x, float cell, uint32_t salt, float height, float reachMin, float reachMax) {
+    const int c0 = static_cast<int>(std::floor(x / cell));
+    float total = 0.0f;
+    for (int c = c0 - 1; c <= c0 + 1; ++c) {
+        const float centre = (static_cast<float>(c) + hash01(c, 0, static_cast<int>(kWorldSeed) + static_cast<int>(salt))) * cell;
+        const float reach = reachMin + (reachMax - reachMin) * hash01(c, 1, static_cast<int>(kWorldSeed) + static_cast<int>(salt));
+        total += height * tent(x - centre, reach);
+    }
+    return total;
+}
+
 static float biomeOffset(BiomeType biome, float x) {
     switch (biome) {
         case BiomeType::Plains: {
-            // Gentle, low-amplitude ripple.
-            const float fine = shapeWave(x, 150.0f, kWorldSeed + 17u, 1);
-            return -fine * 8.0f;
+            // A gentle ripple, plus shallow drainage basins where the ground
+            // dips and moisture pools across wide stretches.
+            const float ripple = shapeWave(x, 150.0f, kWorldSeed + 17u, 1) * 8.0f;
+            const float basin = std::max(0.0f, fbm1(x / 520.0f, kWorldSeed + 1000u, 2) - 0.6f) * 100.0f;
+            return -ripple + basin;
         }
         case BiomeType::Hills: {
-            // Rolling hills with some roughness.
-            const float hills = shapeWave(x, 900.0f, kWorldSeed + 11u, 3);
+            // Cuestas: each hill rises gently on one side and drops steeply
+            // off the other, like a sedimentary ridge.
+            const float phase = x / 700.0f - std::floor(x / 700.0f);
+            constexpr float kRise = 0.8f;
+            const float cuesta = phase < kRise
+                ? 60.0f * (phase / kRise) * (phase / kRise)
+                : 60.0f * (1.0f - (phase - kRise) / (1.0f - kRise));
             const float rough = shapeWave(x, 90.0f, kWorldSeed + 13u, 2);
-            return -hills * 100.0f - rough * 25.0f;
+            return -cuesta + rough * 25.0f;
         }
         case BiomeType::Mountains: {
-            // Fault-block ranges: a steep west face and a long slope east.
-            return -40.0f - mountainHeightAt(static_cast<int>(std::lround(x))) * 260.0f;
+            // Fault-block ranges, with sharp ridged crests only on the peaks.
+            const float m = mountainHeightAt(static_cast<int>(std::lround(x)));
+            const float jag = ridged1(x / 160.0f, kWorldSeed + 1020u, 3) * m * 60.0f;
+            return -40.0f - m * 260.0f - jag;
         }
         case BiomeType::Desert: {
-            // Dunes: each one rises gently to the windward side and falls
-            // steeply on the lee side, the way wind builds them. A fine ripple
-            // runs over the top.
+            // Dunes whose height varies across the desert: tall megadunes in
+            // some stretches, low rippled flats in others.
             const float phase = x / 280.0f - std::floor(x / 280.0f);
-            // The windward slope climbs over the first 85% of the dune; the
-            // lee face falls over the last 15%. Both are continuous, so the lee
-            // face is steep but not a cliff.
             constexpr float kCrest = 0.85f;
             const float dune = phase < kCrest
                 ? 45.0f * (phase / kCrest) * (phase / kCrest)
                 : 45.0f * (1.0f - (phase - kCrest) / (1.0f - kCrest));
-            return dune + shapeWave(x, 40.0f, kWorldSeed + 80u, 1) * 3.0f;
+            const float scale = 0.55f + 0.9f * fbm1(x / 1400.0f, kWorldSeed + 1030u, 2);
+            return dune * scale + shapeWave(x, 40.0f, kWorldSeed + 80u, 1) * 3.0f;
         }
         case BiomeType::Tundra: {
+            // Rolling frozen ground with frost mounds (pingos) scattered over it.
             const float hills = shapeWave(x, 600.0f, kWorldSeed + 90u, 2);
-            return -hills * 20.0f;
+            return -hills * 20.0f - scatter(x, 48.0f, 1040u, 14.0f, 14.0f, 24.0f);
         }
         case BiomeType::Volcanic: {
+            // Sharp volcanic ridges, with craters hollowed out of the summits.
             const float crest = ridged1(x / 800.0f, kWorldSeed + 95u, 3);
-            return -crest * 120.0f;
+            return -crest * 120.0f + scatter(x, 900.0f, 1050u, 40.0f, 40.0f, 70.0f);
         }
         case BiomeType::Canyons: {
-            // Trenches: the absolute value of a wave cuts a V-shaped valley
-            // into the ground, so the land is pushed down along each trench.
-            const float trench = std::fabs(shapeWave(x, 600.0f, kWorldSeed + 45u, 2));
-            return trench * 70.0f;
+            // V-shaped trenches whose walls step down in rock benches.
+            const float trench = std::fabs(shapeWave(x, 600.0f, kWorldSeed + 45u, 2)) * 70.0f;
+            const float bench = std::floor(trench / 12.0f) * 12.0f;
+            return 0.5f * trench + 0.5f * bench;
         }
     }
     return 0.0f;

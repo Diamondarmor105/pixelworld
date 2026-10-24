@@ -18,6 +18,8 @@ enum class Mat : uint8_t {
     Stone,
     Limestone,
     Sandstone,
+    Granite,
+    Marble,
     Basalt,
     Obsidian,
     Bones,

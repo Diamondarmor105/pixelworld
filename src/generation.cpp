@@ -923,8 +923,8 @@ static float shapeWave(float x, float wavelength, uint32_t seed, int octaves) {
 // Each biome sits at a point on a low-frequency zone map. Where two biomes
 // meet, their heights are blended by weight across the overlap, so there is
 // no cliff at a biome border.
-enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3, Desert = 4, Tundra = 5, Volcanic = 6 };
-constexpr int kBiomeCount = 7;
+enum class BiomeType { Plains = 0, Hills = 1, Mountains = 2, Canyons = 3, Desert = 4, Tundra = 5, Volcanic = 6, Scrubland = 7 };
+constexpr int kBiomeCount = 8;
 // The first four biomes are placed on the zone map; the desert is placed by
 // temperature instead, so it appears where the country is hot.
 constexpr int kZoneBiomes = 4;
@@ -955,6 +955,13 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     out[kZoneBiomes] = desert;
     out[kZoneBiomes + 1] = tundra;
     out[kZoneBiomes + 2] = volcanic;
+    // Scrubland: the ecotone between desert and plains. It peaks where the two
+    // are equally strong and fades out in the core of either. Weights are then
+    // renormalized so they still sum to 1.
+    out[kZoneBiomes + 3] = 4.0f * out[kZoneBiomes] * out[static_cast<int>(BiomeType::Plains)];
+    float total = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) total += out[i];
+    for (int i = 0; i < kBiomeCount; ++i) out[i] /= total;
 }
 
 // The height offset (in rows, positive is lower) one biome gives a column.
@@ -1047,6 +1054,10 @@ static float biomeOffset(BiomeType biome, float x) {
             // Sharp volcanic ridges, with craters hollowed out of the summits.
             const float crest = ridged1(x / 800.0f, kWorldSeed + 95u, 3);
             return -crest * 120.0f + scatter(x, 900.0f, 1050u, 40.0f, 40.0f, 70.0f);
+        }
+        case BiomeType::Scrubland: {
+            // Low, uneven ground with little relief.
+            return -shapeWave(x, 300.0f, kWorldSeed + 100u, 2) * 12.0f;
         }
         case BiomeType::Canyons: {
             // V-shaped trenches whose walls step down in rock benches.
@@ -1197,6 +1208,10 @@ static Land landAt(int worldX) {
         land.topMat = Mat::Basalt;
         land.soilRows = 1;
         land.dirtRows = 2;
+    } else if (beats(BiomeType::Scrubland, jit2)) {
+        land.topMat = Mat::Gravel;
+        land.soilRows = 2;
+        land.dirtRows = 6 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
     } else if (beats(BiomeType::Hills, jit2)) {
         land.topMat = Mat::Gravel;
         land.soilRows = 2 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);

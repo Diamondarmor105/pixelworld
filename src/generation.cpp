@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <thread>
 #include <vector>
 
 // The seed of the whole world.
@@ -517,6 +518,27 @@ constexpr float kDeepThreshold = 0.20f;
 // How far the cave fields are pushed about, in cells (the domain warp).
 constexpr float kCaveWarp = 40.0f;
 
+// Runs f(first, last) over the range [0, count), split across the machine's
+// cores. The pieces touch different cells, and the noise they read is pure, so
+// the result is the same as running them one after another.
+template <class F>
+void parallelRanges(int count, F f) {
+    const int hardware = static_cast<int>(std::thread::hardware_concurrency());
+    const int workers = std::max(1, std::min(hardware, count / 16));
+    if (workers <= 1) {
+        f(0, count);
+        return;
+    }
+    std::vector<std::thread> pool;
+    pool.reserve(static_cast<size_t>(workers));
+    for (int w = 0; w < workers; ++w) {
+        const int first = count * w / workers;
+        const int last = count * (w + 1) / workers;
+        pool.emplace_back([&f, first, last] { f(first, last); });
+    }
+    for (std::thread& t : pool) t.join();
+}
+
 void carveChunkCaves(World& world, int chunk) {
     constexpr int kMargin = 64;
     constexpr int kMinHole = 30;
@@ -527,52 +549,77 @@ void carveChunkCaves(World& world, int chunk) {
     const int rows = height - 3;
     auto at = [&](int x, int y) { return static_cast<size_t>(y) * winW + (x - winX0); };
 
+    // The buffers are kept from one chunk to the next, since carving runs for
+    // every new chunk. They are shared by the worker threads below, so they are
+    // plain statics rather than thread-local.
+    static std::vector<uint8_t> mask;
+    static std::vector<uint8_t> nextMask;
+    static std::vector<uint8_t> seen;
+    static std::vector<int> stack;
+    static std::vector<int> piece;
+    const size_t cells = static_cast<size_t>(winW) * rows;
+    mask.assign(cells, 0);
+    nextMask.resize(cells);
+    seen.assign(cells, 0);
+
+    // The ground and the volcanic stretch depend only on the column, so they
+    // are read once per column here, before the threads start.
+    std::vector<int> surfCol(winW);
+    std::vector<float> tubeCol(winW);
+    for (int i = 0; i < winW; ++i) {
+        surfCol[i] = groundRow(winX0 + i);
+        tubeCol[i] = 1.0f + 1.4f * volcanicWeightAt(winX0 + i);
+    }
+
     // Independent warp + beds, in the style of the strata but with its own
     // scales and seeds, so caves have the same irregular folded shape as the
     // rock layers without copying them. The mask is computed first.
-    std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
-    for (int x = winX0; x < winX0 + winW; ++x) {
-        const int surf = groundRow(x);
-        for (int y = surf + 40; y < rows; ++y) {
-            const float fx = static_cast<float>(x);
-            const float fy = static_cast<float>(y);
-            const float qx = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 950u, 2) - 0.5f) * 2.0f;
-            const float qy = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 951u, 2) - 0.5f) * 2.0f;
-            const float rx = (fbm2((fx + qx * 55.0f) / 250.0f, (fy + qy * 55.0f) / 190.0f,
-                                    kWorldSeed + 952u, 2) - 0.5f) * 2.0f;
-            const float ry = (fbm2((fx - qy * 45.0f) / 250.0f, (fy - qx * 45.0f) / 190.0f,
-                                    kWorldSeed + 953u, 2) - 0.5f) * 2.0f;
-            // Volcanic country: the cave field is stretched vertically, so the
-            // holes rise as magma tubes. The stretch depends on the column only,
-            // so it does not change with depth.
-            const float tube = 1.0f + 1.4f * volcanicWeightAt(x);
-            const float beds = fbm2((fx + rx * 75.0f) / 220.0f,
-                                    (fy + ry * 75.0f) / (140.0f * tube),
-                                    kWorldSeed + 971u, 3);
-            const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
-            const float thresh = 0.78f - depthFactor * 0.16f;   // looser deep
-            if (beds > thresh) mask[at(x, y)] = 1;
+    parallelRanges(winW, [&](int first, int last) {
+        for (int i = first; i < last; ++i) {
+            const int x = winX0 + i;
+            const int surf = surfCol[i];
+            const float tube = tubeCol[i];
+            for (int y = surf + 40; y < rows; ++y) {
+                const float fx = static_cast<float>(x);
+                const float fy = static_cast<float>(y);
+                const float qx = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 950u, 2) - 0.5f) * 2.0f;
+                const float qy = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 951u, 2) - 0.5f) * 2.0f;
+                const float rx = (fbm2((fx + qx * 55.0f) / 250.0f, (fy + qy * 55.0f) / 190.0f,
+                                        kWorldSeed + 952u, 2) - 0.5f) * 2.0f;
+                const float ry = (fbm2((fx - qy * 45.0f) / 250.0f, (fy - qx * 45.0f) / 190.0f,
+                                        kWorldSeed + 953u, 2) - 0.5f) * 2.0f;
+                // Volcanic country stretches the field vertically (see tubeCol).
+                const float beds = fbm2((fx + rx * 75.0f) / 220.0f,
+                                        (fy + ry * 75.0f) / (140.0f * tube),
+                                        kWorldSeed + 971u, 3);
+                const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
+                const float thresh = 0.78f - depthFactor * 0.16f;   // looser deep
+                if (beds > thresh) mask[at(x, y)] = 1;
+            }
         }
-    }
+    });
 
     // Morphological opening: erode twice, then dilate twice, 4-way. Removes
     // thin slivers while keeping round holes.
     auto step = [&](bool erode) {
-        std::vector<uint8_t> next(mask.size(), 0);
-        const int dx[4] = {-1, 1, 0, 0};
-        const int dy[4] = {0, 0, -1, 1};
-        for (int x = winX0; x < winX0 + winW; ++x)
-            for (int y = 0; y < rows; ++y) {
-                bool hit = erode;
-                for (int d = 0; d < 4; ++d) {
-                    const int nx = x + dx[d], ny = y + dy[d];
-                    const bool n = nx >= winX0 && nx < winX0 + winW && ny >= 0 && ny < rows &&
-                                   mask[at(nx, ny)] != 0;
-                    hit = erode ? (hit && n) : (hit || n);
+        parallelRanges(winW, [&](int first, int last) {
+            const int dx[4] = {-1, 1, 0, 0};
+            const int dy[4] = {0, 0, -1, 1};
+            for (int i = first; i < last; ++i) {
+                const int x = winX0 + i;
+                for (int y = 0; y < rows; ++y) {
+                    bool hit = erode;
+                    for (int d = 0; d < 4; ++d) {
+                        const int nx = x + dx[d], ny = y + dy[d];
+                        const bool n = nx >= winX0 && nx < winX0 + winW && ny >= 0 && ny < rows &&
+                                       mask[at(nx, ny)] != 0;
+                        hit = erode ? (hit && n) : (hit || n);
+                    }
+                    nextMask[at(x, y)] = hit ? 1 : 0;
                 }
-                next[at(x, y)] = hit ? 1 : 0;
             }
-        mask.swap(next);
+        });
+        mask.swap(nextMask);
     };
     step(true);
     step(true);
@@ -580,9 +627,6 @@ void carveChunkCaves(World& world, int chunk) {
     step(false);
 
     // Fill pieces too small to be caves.
-    std::vector<uint8_t> seen(static_cast<size_t>(winW) * rows, 0);
-    std::vector<int> stack;
-    std::vector<int> piece;
     for (int x = winX0; x < winX0 + winW; ++x)
         for (int y = 0; y < rows; ++y) {
             if (!mask[at(x, y)] || seen[at(x, y)]) continue;
@@ -623,11 +667,6 @@ void carveChunkCaves(World& world, int chunk) {
         }
 }
 
-void carveCaves(World& world, int chunkStart, int chunkEnd) {
-    for (int chunk = chunkStart; chunk <= chunkEnd; ++chunk) {
-        if (world.hasChunk(chunk)) carveChunkCaves(world, chunk);
-    }
-}
 
 // -- The hand-made test scenes ----------------------------------------------
 //
@@ -1128,7 +1167,7 @@ static float profileHeight(int worldX) {
 // The answers are kept in a small cache of a fixed size, so a long walk
 // through the world cannot fill the machine's memory.
 int profileAt(int worldX) {
-    static constexpr int kSlots = 8192;   // a power of two, so the index is cheap
+    static constexpr int kSlots = 65536;   // a power of two, so the index is cheap
     static std::vector<int> keys;
     static std::vector<int> values;
     if (keys.empty()) {
@@ -1216,7 +1255,8 @@ static Land landAt(int worldX) {
     // steep-face or hollow rules. What it is made of depends only on the
     // climate of the province it is in.
     const int profile = profileAt(worldX);
-    const float temp = climateTemperature(worldX, smoothSurfaceRow(worldX));
+    const int smooth = smoothSurfaceRow(worldX);
+    const float temp = climateTemperature(worldX, smooth);
 
     land.profile = profile;
     land.surface = profile;
@@ -1229,7 +1269,7 @@ static Land landAt(int worldX) {
     // Cold country is snow, hot country is sand, everything else is dirt.
     // The desert is dune sand: a deep layer over a thin dirt floor.
     float biomeW[kBiomeCount];
-    biomeWeights(worldX, smoothSurfaceRow(worldX), biomeW);
+    biomeWeights(worldX, smooth, biomeW);
     // The surface is the strongest biome on the 2D climate map.
     int dom = 0;
     for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
@@ -1445,11 +1485,9 @@ void generateChunksAround(World& world, int worldX, int radius) {
         newChunks.push_back(index);
     }
     // Carve caves AFTER all chunks are generated, so the strata are in place.
-    if (!newChunks.empty()) {
-        int lo = *std::min_element(newChunks.begin(), newChunks.end()) - 1;
-        int hi = *std::max_element(newChunks.begin(), newChunks.end()) + 1;
-        carveCaves(world, lo, hi);
-    }
+    // A chunk's caves depend only on the ground and the noise, not on its
+    // neighbours, so only the new chunks need carving.
+    for (int index : newChunks) carveChunkCaves(world, index);
 }
 
 // -- The hand-made test scenes ----------------------------------------------

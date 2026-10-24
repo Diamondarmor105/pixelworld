@@ -1068,9 +1068,8 @@ bool checkCavesExist() {
     const int chunks = 20;
     int withCaves = 0;
     for (int i = 0; i < chunks; ++i) {
-        Chunk& chunk = world.chunk(i);
-        generateChunk(i, chunk);
         generateChunksAround(world, i * Chunk::WIDTH, 1);
+        Chunk& chunk = world.chunk(i);
         const int height = static_cast<int>(chunk.cells.size() / Chunk::WIDTH);
         int air = 0;
         for (int lx = 0; lx < Chunk::WIDTH; ++lx) {

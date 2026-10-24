@@ -39,8 +39,9 @@ uint32_t worldSeed();
 // -- The endless world -----------------------------------------------------
 
 // Builds the terrain for one chunk: the ground surface, the layers under it,
-// caves, pockets of loose material, a pond, a lava pool and the hand-made
-// structures that stand on it.
+// pockets of loose material, and the hand-made structures that stand on it.
+// The caves are not cut here: generateChunksAround carves them once the chunk
+// is in place, so use that to build a chunk that should have caves.
 //
 // The same chunk index always gives the same chunk, so the world can be
 // forgotten and built again identically. `placements` is optional: when it is

@@ -1327,7 +1327,10 @@ Land landAt(int worldX) {
     // Cold country is snow, hot country is sand, everything else is dirt.
     // The desert is dune sand: a deep layer over a thin dirt floor.
     float biomeW[kBiomeCount];
-    biomeWeights(worldX, smooth, biomeW);
+    // The biome is read at sea level, the same place the height curve reads
+    // it, so the shape of the land and the surface material always agree. The
+    // temperature still comes from the smoothed row, so high ground is colder.
+    biomeWeights(worldX, kSeaRow, biomeW);
     // The surface is the strongest biome on the 2D climate map.
     int dom = 0;
     for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
@@ -1516,7 +1519,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         // Only on the living ground of the plains and hills: no trees in the
         // desert, the tundra, the volcanic country or on bare rock.
         float bw[kBiomeCount];
-        biomeWeights(wx, smoothSurfaceRow(wx), bw);
+        biomeWeights(wx, kSeaRow, bw);
         const float living = bw[static_cast<int>(BiomeType::Plains)] + bw[static_cast<int>(BiomeType::Hills)];
         const Mat ground = landAt(wx).topMat;
         if (living < 0.3f || (ground != Mat::Soil && ground != Mat::Grass)) continue;

@@ -1233,7 +1233,7 @@ static Land landAt(int worldX) {
     // and the layers beneath mix the two as a checker (see generateChunk). Deep
     // inside one biome the share is zero, so the biome stays pure.
     const float share = biomeW[sec] / (biomeW[dom] + biomeW[sec] + 1e-6f);
-    land.altShare = std::min(1.0f, std::max(0.0f, (share - 0.3f) / 0.4f));
+    land.altShare = std::min(1.0f, std::max(0.0f, (share - 0.42f) / 0.16f));
     land.topMat = topMatFor(dom, temp);
     land.altMat = topMatFor(sec, temp);
 

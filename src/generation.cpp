@@ -1353,20 +1353,20 @@ Land landAt(int worldX) {
     const float soilOf[kBiomeCount] = {
         soil0,                                             // Plains
         2.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f, // Hills
-        3.0f,                                              // Mountains
+        0.0f,                                              // Mountains (bare rock)
         soil0,                                             // Canyons
         30.0f + noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f, // Desert
         3.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f, // Tundra
-        3.0f,                                              // Volcanic
+        0.0f,                                              // Volcanic (bare rock)
         4.0f};                                             // Scrubland
     const float dirtOf[kBiomeCount] = {
         dirt0,                                             // Plains
         8.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f, // Hills
-        10.0f,                                             // Mountains
+        0.0f,                                              // Mountains (bare rock)
         dirt0,                                             // Canyons
         0.0f,                                              // Desert (sand sits on stone)
         10.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f, // Tundra
-        10.0f,                                             // Volcanic
+        0.0f,                                              // Volcanic (bare rock)
         12.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f}; // Scrubland
     float soilW = 0.0f, dirtW = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) {

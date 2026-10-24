@@ -13,6 +13,8 @@ static uint32_t kWorldSeed = 0x9E3779B9u;
 void setWorldSeed(uint32_t seed) { kWorldSeed = seed ? seed : 0x9E3779B9u; }
 uint32_t worldSeed() { return kWorldSeed; }
 
+static float volcanicWeightAt(float x);
+
 namespace {
 
 // The seed of the whole world. One number decides everything: where the hills
@@ -568,8 +570,12 @@ void carveChunkCaves(World& world, int chunk) {
                                     kWorldSeed + 952u, 2) - 0.5f) * 2.0f;
             const float ry = (fbm2((fx - qy * 45.0f) / 250.0f, (fy - qx * 45.0f) / 190.0f,
                                     kWorldSeed + 953u, 2) - 0.5f) * 2.0f;
+            // Volcanic country: the cave field is stretched vertically, so the
+            // holes rise as magma tubes. The stretch depends on the column only,
+            // so it does not change with depth.
+            const float tube = 1.0f + 1.4f * volcanicWeightAt(x);
             const float beds = fbm2((fx + rx * 75.0f) / 220.0f,
-                                    (fy + ry * 75.0f) / 140.0f,
+                                    (fy + ry * 75.0f) / (140.0f * tube),
                                     kWorldSeed + 971u, 3);
             const float depthFactor = std::min(1.0f, std::max(0.0f, (fy - static_cast<float>(surf) - 20.0f) / 400.0f));
             const float thresh = 0.78f - depthFactor * 0.16f;   // looser deep
@@ -985,6 +991,14 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     if (total <= 1e-6f) { out[static_cast<int>(BiomeType::Plains)] = 1.0f; return; }
     for (int i = 0; i < kBiomeCount; ++i) out[i] /= total;
 }
+
+// How much of the volcanic biome this column is (0..1).
+static float volcanicWeightAt(float x) {
+    float w[kBiomeCount];
+    biomeWeights(static_cast<int>(std::lround(x)), w);
+    return w[static_cast<int>(BiomeType::Volcanic)];
+}
+
 
 // The height offset (in rows, positive is lower) one biome gives a column.
 // A smooth bump: 1 at its centre, falling linearly to 0 at `reach`.

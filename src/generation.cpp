@@ -628,33 +628,12 @@ void carveChunkCaves(World& world, int chunk) {
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
             if (world.at(x, y) == Mat::Air) continue;
             if (world.at(x, y) == Mat::Bedrock) continue;
-            // Carve through everything that is not air or bedrock, so no
-            // strata or surface material is left sitting inside a cave.
+            if (world.at(x, y) == Mat::Soil) continue;
+            if (world.at(x, y) == Mat::PackedDirt) continue;
+            if (world.at(x, y) == Mat::Sand) continue;
+            if (world.at(x, y) == Mat::Snow) continue;
             world.set(x, y, Mat::Air);
         }
-
-    // Remove thin walls left inside caves: a non-air cell with five or more
-    // air neighbours is a sliver, not a real wall. Turn it to air. Run a few
-    // times so newly opened cells expose the next layer of slivers.
-    for (int iter = 0; iter < 6; ++iter) {
-        std::vector<std::pair<int,int>> thin;
-        int removedThisIter = 0;
-        for (int x = winX0; x < winX0 + winW; ++x)
-            for (int y = 0; y < rows; ++y) {
-                if (world.at(x, y) == Mat::Air) continue;
-                int airN = 0;
-                for (int dy = -1; dy <= 1; ++dy)
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        if (dx == 0 && dy == 0) continue;
-                        int nx = x + dx, ny = y + dy;
-                        if (ny < 0 || ny >= height - 3) continue;
-                        if (world.at(nx, ny) == Mat::Air) ++airN;
-                    }
-                if (airN >= 5) { thin.emplace_back(x, y); if (x == 1 || x == 2) fprintf(stderr, "chunk pass: removing x=%d y=%d airN=%d iter=%d\n", x, y, airN, iter); }
-            }
-        for (auto &c : thin) { world.set(c.first, c.second, Mat::Air); ++removedThisIter; }
-        fprintf(stderr, "iter %d removed %d\n", iter, removedThisIter);
-    }
 }
 
 void carveCaves(World& world, int chunkStart, int chunkEnd) {

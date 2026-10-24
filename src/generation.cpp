@@ -17,6 +17,17 @@ static float volcanicWeightAt(float x);
 
 namespace {
 
+// A staircase that is continuous: flat treads at each multiple of `step`, with
+// each riser rising smoothly over the last part of the step. A hard staircase
+// jumps a whole step in one column, which reads as a misaligned height.
+static float smoothStair(float h, float step) {
+    const float q = h / step;
+    const float n = std::floor(q);
+    const float t = std::min(1.0f, std::max(0.0f, (q - n - 0.3f) / 0.4f));
+    return (n + t * t * (3.0f - 2.0f * t)) * step;
+}
+
+
 // The seed of the whole world. One number decides everything: where the hills
 // are, where the caves run, what is buried where. Randomized per run unless a
 // seed is supplied through setWorldSeed().
@@ -1061,7 +1072,7 @@ static float biomeOffset(BiomeType biome, float x) {
         case BiomeType::Canyons: {
             // V-shaped trenches whose walls step down in rock benches.
             const float trench = std::fabs(shapeWave(x, 600.0f, kWorldSeed + 45u, 2)) * 70.0f;
-            const float bench = std::floor(trench / 12.0f) * 12.0f;
+            const float bench = smoothStair(trench, 12.0f);
             return 0.5f * trench + 0.5f * bench;
         }
     }
@@ -1131,7 +1142,7 @@ int profileAt(int worldX) {
                        std::min(1.0f, std::max(0.0f, (0.40f - climateMoisture(worldX, kSeaRow)) / 0.10f)) *
                        (1.0f - biomeW[static_cast<int>(BiomeType::Desert)]);
     constexpr float kBench = 14.0f;   // rows per step
-    const float stepped = std::floor(raw / kBench) * kBench;
+    const float stepped = smoothStair(raw, kBench);
     const int row = static_cast<int>(std::lround(raw + (stepped - raw) * arid));
     keys[slot] = worldX;
     values[slot] = row;

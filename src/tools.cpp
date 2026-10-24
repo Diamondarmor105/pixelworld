@@ -104,10 +104,6 @@ void Tools::fire(float sx, float sy, float tx, float ty) {
 void Tools::tick(World& world) {
     if (cooldown_ > 0) --cooldown_;
 
-    // Each tick starts with a clean sheet: whatever exploded on this tick is
-    // reported, and yesterday's is forgotten.
-    blastEvents_.clear();
-
     for (auto& p : projectiles_) {
         if (p.done) continue;
 
@@ -208,7 +204,6 @@ void Tools::detonate(World& world, Projectile& p) {
         options.flames = !underwater;  // underwater it makes bubbles, not fire
         options.smokePuffs = underwater ? 12 : 24;
         blast(world, cx, cy, options);
-        blastEvents_.push_back(BlastEvent{cx, cy, radius});
     } else if (p.tool == Tool::AcidFlask) {
         // The flask shatters. Its acid ends up in the air around the impact -
         // the visible splash - and in the cell it actually struck, so that it

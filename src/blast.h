@@ -28,13 +28,5 @@ struct BlastOptions {
     int smokePuffs = 16;      // how many smoke clouds to puff out
 };
 
-// One explosion, reported afterwards so that the game can hurt the player if
-// they were standing too close to it.
-struct BlastEvent {
-    int x = 0;       // the centre, in world cells
-    int y = 0;
-    int radius = 0;  // how far it reached
-};
-
 // Blows a hole in the world around (cx, cy).
 void blast(World& world, int cx, int cy, const BlastOptions& options);

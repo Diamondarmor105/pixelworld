@@ -172,19 +172,17 @@ bool lavaIsDeep(const World& world, int x, int y) {
 // the line of sight first, and what is left of the energy carries on to the
 // next block. A stone wall near the sulfur is broken; a wall the blast cannot
 // afford shields everything behind it.
-void explode(World& world, int cx, int cy, std::vector<BlastEvent>* blasts) {
+void explode(World& world, int cx, int cy) {
     BlastOptions options;
     options.radius = 8;
     options.power = 0.9f;
     options.smokePuffs = 8;
     blast(world, cx, cy, options);
-    if (blasts) blasts->push_back(BlastEvent{cx, cy, options.radius});
 }
 
 // One proximity rule, between the cell at (x, y) and the one touching it at
 // (nx, ny). Written so each rule fires whichever way round the two appear.
-void reactPair(World& world, int x, int y, int nx, int ny, int frame,
-                std::vector<BlastEvent>* blasts) {
+void reactPair(World& world, int x, int y, int nx, int ny, int frame) {
     const Mat a = world.at(x, y);
     const Mat b = world.at(nx, ny);
     if (!canReact(a) || !canReact(b) || a == b) return;
@@ -272,18 +270,17 @@ void reactPair(World& world, int x, int y, int nx, int ny, int frame,
     if (info.flammable && hot == Mat::Lava) tryIgnite(world, hx, hy, frame);
 
     // Lava reaching sulfur crust blows a crater and lights the rim.
-    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy, blasts);
+    if (cold == Mat::SulfurCrust && hot == Mat::Lava) explode(world, hx, hy);
 }
 
 // Every pair of touching cells that knows about each other gets a chance to
 // react. Scanning right and down covers each pair exactly once.
-void applyReactions(World& world, const SimRect& region, int frame,
-                    std::vector<BlastEvent>* blasts) {
+void applyReactions(World& world, const SimRect& region, int frame) {
     for (int y = region.y0; y <= region.y1; ++y) {
         for (int x = region.x0; x <= region.x1; ++x) {
             if (!canReact(world.at(x, y))) continue;
-            reactPair(world, x, y, x + 1, y, frame, blasts);
-            reactPair(world, x, y, x, y + 1, frame, blasts);
+            reactPair(world, x, y, x + 1, y, frame);
+            reactPair(world, x, y, x, y + 1, frame);
         }
     }
 }
@@ -642,13 +639,9 @@ void Simulation::step(World& world) {
 void Simulation::step(World& world, const SimRect& region) {
     if (region.x1 < region.x0 || region.y1 < region.y0) return;
 
-    // Each step starts with a clean sheet: whatever exploded on this step is
-    // reported, and yesterday's is forgotten.
-    blastEvents_.clear();
-
     // Reactions first (lava crusts, ice melts, sulfur blows), then fire, then
     // movement.
-    applyReactions(world, region, frame_, &blastEvents_);
+    applyReactions(world, region, frame_);
     updateFire(world, region, frame_);
 
     // One movement pass, bottom-up, over every mobile cell - see the note above

@@ -53,12 +53,6 @@ public:
 
     int frame() const { return frame_; }
 
-    // The explosions that went off on the last step - sulfur crust blowing up
-    // when lava reached it - so the game can hurt the player if they were
-    // standing too close.
-    const std::vector<BlastEvent>& blastEvents() const { return blastEvents_; }
-
 private:
     int frame_ = 0;
-    std::vector<BlastEvent> blastEvents_;
 };

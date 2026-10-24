@@ -45,19 +45,6 @@ Three of those checks are the rules the whole world stands on, and each one is t
 - **A cell holds one unit, no more.** A pool keeps the depth it was poured at instead of packing itself into fewer and fuller cells.
 - **The ground stands up.** Soil, packed dirt and mud hold their shape. A hill, a cliff and a cave roof do not slump into a flat plain, and a pond on the surface keeps its water, level from end to end, instead of leaking into a cave underneath.
 
-## Damage and death
-
-The player has 100 points of health, shown as a bar in the top-left corner.
-
-| What | How much it hurts |
-| --- | --- |
-| Lava | 45 a second — about two seconds to die |
-| Acid | 30 a second |
-| Fire | 25 a second |
-| An explosion | up to 60 in one hit, less the further away you are |
-
-When the health runs out you die. The screen says **YOU DIED** for a moment and then you start again at the beginning of the world, whole. The world is **not** put back: every hole you blew, every tree you burnt and every fire you set is still there, and the world keeps going while you are dead.
-
 ## Status
 
 Slice 8 of 8 complete: **the whole game**. Press `1`, `2` or `3` to pick up a tool, then click where you want it to go.

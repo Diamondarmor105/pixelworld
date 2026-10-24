@@ -7,9 +7,7 @@
 #include <random>
 #include <vector>
 
-#include "blast.h"
 #include "camera.h"
-#include "damage.h"
 #include "generation.h"
 #include "hud.h"
 #include "materials.h"
@@ -39,10 +37,6 @@ constexpr int CHUNK_RADIUS = 2;
 // Where the player starts: on the ground, near the left end of the level.
 constexpr float PLAYER_START_X = 100.0f;
 
-// How long the player lies there after dying, in ticks, before they start
-// again at the beginning of the world.
-constexpr int DEATH_PAUSE = 90;
-
 // Steps the simulation for however long a self-test needs.
 void runSteps(World& world, int steps) {
     Simulation sim(world);
@@ -59,39 +53,6 @@ float groundBelow(const World& world, int x) {
         return static_cast<float>(y - Player::HEIGHT);
     }
     return 0.0f;
-}
-
-// The player's health, one tick.
-//
-// What they are standing in hurts: lava worst, then acid, then fire. An
-// explosion that went off nearby hurts too, and the closer they are to the
-// middle of it the more it takes off.
-//
-// When the health runs out they lie still for a moment, and then start again
-// at the beginning of the world, whole. The world is never reset, so
-// everything that happened while they were away stays happened: the hole
-// they blew is still a hole.
-//
-// Returns true on the tick the player starts again.
-bool tickLife(World& world, Player& player, const std::vector<BlastEvent>& blasts,
-              int& deathTimer) {
-    if (player.dead()) {
-        if (deathTimer > 0) {
-            --deathTimer;
-            if (deathTimer == 0) {
-                player.respawn(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
-                return true;
-            }
-        }
-        return false;
-    }
-
-    const float hurt = damageAt(world, player, blasts);
-    if (hurt <= 0.0f) return false;
-
-    player.damage(hurt);
-    if (player.dead()) deathTimer = DEATH_PAUSE;
-    return false;
 }
 
 // The simulated grid and the window are chosen to suit the actual display: the
@@ -151,9 +112,6 @@ int runGame(bool smoke) {
 
     Tools tools;
 
-    // Counts down while the player is dead. When it runs out, they start again.
-    int deathTimer = 0;
-
     int frames = 0;
     while (!WindowShouldClose()) {
         // The world goes on for ever: build whatever is near the player that
@@ -170,7 +128,6 @@ int runGame(bool smoke) {
             generateChunksAround(world, static_cast<int>(PLAYER_START_X), CHUNK_RADIUS);
             player = Player(PLAYER_START_X, groundBelow(world, static_cast<int>(PLAYER_START_X)));
             camera = GameCamera(viewport.gridWidth, viewport.gridHeight, PLAYER_START_X, 0.0f);
-            deathTimer = 0;
         }
 
         // Tool selection.
@@ -183,24 +140,18 @@ int runGame(bool smoke) {
         if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveInput -= 1.0f;
         const bool jump = IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_W) || IsKeyPressed(KEY_UP);
 
-        // A dead player does not walk, jump or fire. The world keeps going
-        // without them, which is the point: everything they did stays done.
-        const bool alive = !player.dead();
+        player.tick(world, moveInput, jump);
+        camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
+        camera.clamp(world.height());
 
-        if (alive) {
-            player.tick(world, moveInput, jump);
-            camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
-            camera.clamp(world.height());
-
-            // Fire tool on left click.
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                const Vector2 mouse = GetMousePosition();
-                const float gx = camera.viewX() +
-                               static_cast<float>((mouse.x - viewport.offsetX) / viewport.scale);
-                const float gy = camera.viewY() +
-                               static_cast<float>((mouse.y - viewport.offsetY) / viewport.scale);
-                tools.fire(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, gx, gy);
-            }
+        // Fire tool on left click.
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            const Vector2 mouse = GetMousePosition();
+            const float gx = camera.viewX() +
+                           static_cast<float>((mouse.x - viewport.offsetX) / viewport.scale);
+            const float gy = camera.viewY() +
+                           static_cast<float>((mouse.y - viewport.offsetY) / viewport.scale);
+            tools.fire(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f, gx, gy);
         }
 
         tools.tick(world);
@@ -214,20 +165,6 @@ int runGame(bool smoke) {
             std::min(world.height() - 1, camera.viewY() + viewport.gridHeight - 1 + SIM_MARGIN)};
         sim.step(world, region);
 
-        // The player's health: what they are standing in hurts, and so does any
-        // explosion that went off too close. When the health runs out they lie
-        // still for a moment and then start again at the beginning of the
-        // world.
-        std::vector<BlastEvent> blasts = tools.blastEvents();
-        for (const BlastEvent& b : sim.blastEvents()) blasts.push_back(b);
-
-        if (tickLife(world, player, blasts, deathTimer)) {
-            // The player has just started again: take the camera with them.
-            camera = GameCamera(viewport.gridWidth, viewport.gridHeight, PLAYER_START_X, 0.0f);
-            camera.follow(player.x() + Player::WIDTH * 0.5f, player.y() + Player::HEIGHT * 0.5f);
-            camera.clamp(world.height());
-        }
-
         renderer.updateImage(world, camera.viewX(), camera.viewY());
 
         const float offsetX = static_cast<float>(viewport.offsetX) -
@@ -238,7 +175,7 @@ int runGame(bool smoke) {
         BeginDrawing();
         ClearBackground(BLACK);
         renderer.drawView(viewport.scale, viewport.offsetX, viewport.offsetY);
-        if (alive) player.draw(offsetX, offsetY, viewport.scale);
+        player.draw(offsetX, offsetY, viewport.scale);
         // Draw projectiles.
         for (const auto& p : tools.projectiles()) {
             const float sx = (p.x - camera.viewX()) * viewport.scale + viewport.offsetX;
@@ -247,17 +184,8 @@ int runGame(bool smoke) {
                       (p.tool == Tool::Dynamite) ? RED : GREEN;
             DrawRectangle((int)sx - 2, (int)sy - 2, 4, 4, c);
         }
-        // HUD: tool name and health.
+        // HUD: tool name.
         Hud::drawTool(Tools::name(tools.selected()));
-        Hud::drawHealth(static_cast<int>(player.health() + 0.5f),
-                        static_cast<int>(Player::MAX_HEALTH));
-        if (!alive) {
-            const int centerX = GetScreenWidth() / 2 - MeasureText("YOU DIED", 40) / 2;
-            const int centerY = GetScreenHeight() / 2 - 20;
-            DrawRectangle(centerX - 12, centerY - 8, MeasureText("YOU DIED", 40) + 24, 56,
-                          Fade(BLACK, 0.65f));
-            DrawText("YOU DIED", centerX, centerY, 40, RED);
-        }
         EndDrawing();
 
         ++frames;
@@ -1606,90 +1534,6 @@ bool checkThrowLandsWhereAimed() {
     return passed;
 }
 
-// Self-test: lava hurts. The player stands in it and their health goes down,
-// faster than the fire next to it does.
-bool checkLavaDrainsHealth() {
-    World world(MAX_GRID_HEIGHT);
-    for (int x = 0; x < MAX_GRID_WIDTH; ++x)
-        for (int y = 220; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
-    for (int x = 100; x < 140; ++x)
-        for (int y = 210; y < 220; ++y) world.set(x, y, Mat::Lava);
-
-    Player player(110.0f, 215.0f);
-    const float full = player.health();
-
-    // Stand in the lava for a second.
-    int deathTimer = 0;
-    const std::vector<BlastEvent> noBlasts;
-    for (int i = 0; i < 60; ++i) tickLife(world, player, noBlasts, deathTimer);
-
-    const float hurt = full - player.health();
-    const bool passed = hurt > 0.0f && hurt < full;
-    std::printf("lava drains health: %s (%.1f of %.0f health gone in one second)\n",
-                passed ? "PASS" : "FAIL", hurt, full);
-    return passed;
-}
-
-// Self-test: dying and starting again. The player comes back at the beginning
-// of the world with all their health.
-bool checkDeathRespawnsAtStart() {
-    World world(MAX_GRID_HEIGHT);
-    for (int x = 0; x < MAX_GRID_WIDTH; ++x)
-        for (int y = 220; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
-
-    // The player is far away from the start, and badly hurt.
-    Player player(400.0f, 200.0f);
-    player.damage(Player::MAX_HEALTH);
-    if (!player.dead()) {
-        std::printf("death respawns at start with full health: FAIL (the player did not die)\n");
-        return false;
-    }
-
-    int deathTimer = DEATH_PAUSE;
-    bool respawned = false;
-    const std::vector<BlastEvent> noBlasts;
-    for (int i = 0; i < DEATH_PAUSE + 2; ++i) {
-        if (tickLife(world, player, noBlasts, deathTimer)) respawned = true;
-    }
-
-    const bool passed = respawned && !player.dead() &&
-                        player.health() == Player::MAX_HEALTH &&
-                        player.x() == PLAYER_START_X;
-    std::printf("death respawns at start with full health: %s (x %.0f, health %.0f)\n",
-                passed ? "PASS" : "FAIL", player.x(), player.health());
-    return passed;
-}
-
-// Self-test: dying does not put the world back the way it was. A hole blown
-// before the death is still a hole after it, and a fire that was burning is
-// still burning.
-bool checkWorldDamageSurvivesRespawn() {
-    World world(MAX_GRID_HEIGHT);
-    for (int x = 0; x < MAX_GRID_WIDTH; ++x)
-        for (int y = 220; y < MAX_GRID_HEIGHT; ++y) world.set(x, y, Mat::Stone);
-
-    // A hole in the ground, and a fire burning in the air above it.
-    world.set(300, 219, Mat::Air);
-    world.set(300, 200, Mat::Fire);
-    world.setLife(300, 200, FIRE_LIFE);
-
-    // The player dies and starts again.
-    Player player(400.0f, 200.0f);
-    player.damage(Player::MAX_HEALTH);
-    int deathTimer = DEATH_PAUSE;
-    const std::vector<BlastEvent> noBlasts;
-    for (int i = 0; i < DEATH_PAUSE + 2; ++i) tickLife(world, player, noBlasts, deathTimer);
-
-    const bool holeStillThere = world.at(300, 219) == Mat::Air;
-    const bool fireStillBurning = world.at(300, 200) == Mat::Fire;
-    const bool passed = holeStillThere && fireStillBurning;
-    std::printf("world damage survives respawn: %s (hole %s, fire %s)\n",
-                passed ? "PASS" : "FAIL",
-                holeStillThere ? "still there" : "filled in",
-                fireStillBurning ? "still burning" : "out");
-    return passed;
-}
-
 // Headless check: builds the scene, renders it into an image buffer, writes that
 // image to disk, and runs the physics checks. No window is opened.
 int runSelfTest() {
@@ -1737,9 +1581,6 @@ int runSelfTest() {
     if (!checkAcidFlaskCarvesStone()) passed = false;
     if (!checkToolCooldown()) passed = false;
     if (!checkThrowLandsWhereAimed()) passed = false;
-    if (!checkLavaDrainsHealth()) passed = false;
-    if (!checkDeathRespawnsAtStart()) passed = false;
-    if (!checkWorldDamageSurvivesRespawn()) passed = false;
     if (!checkPlayerRestsOnGround()) passed = false;
     if (!checkPlayerJumpsAndLands()) passed = false;
     if (!checkPlayerBlockedByStone()) passed = false;

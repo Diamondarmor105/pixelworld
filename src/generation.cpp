@@ -315,6 +315,8 @@ struct Land {
     float altShare; // how much of the top layer takes altMat, 0..1
 };
 
+Land landAt(int worldX);
+
 
 // -- What the ground is made of ---------------------------------------------
 
@@ -536,6 +538,8 @@ constexpr float kShallowThreshold = 0.13f;
 constexpr float kDeepThreshold = 0.20f;
 // How far the cave fields are pushed about, in cells (the domain warp).
 constexpr float kCaveWarp = 40.0f;
+// Caves begin this many rows below the bottom of the packed dirt.
+constexpr int kCaveTop = 20;
 
 // Runs f(first, last) over the range [0, count), split across the machine's
 // cores. The pieces touch different cells, and the noise they read is pure, so
@@ -583,10 +587,15 @@ void carveChunkCaves(World& world, int chunk) {
 
     // The ground and the volcanic stretch depend only on the column, so they
     // are read once per column here, before the threads start.
+    // The caves start below the topsoil and the packed dirt, so each column
+    // gives the row where its rock begins.
     std::vector<int> surfCol(winW);
+    std::vector<int> startCol(winW);
     std::vector<float> tubeCol(winW);
     for (int i = 0; i < winW; ++i) {
-        surfCol[i] = groundRow(winX0 + i);
+        const Land land = landAt(winX0 + i);
+        surfCol[i] = land.surface;
+        startCol[i] = land.surface + land.soilRows + land.dirtRows + kCaveTop;
         tubeCol[i] = 1.0f + 1.4f * volcanicWeightAt(winX0 + i);
     }
 
@@ -598,7 +607,7 @@ void carveChunkCaves(World& world, int chunk) {
             const int x = winX0 + i;
             const int surf = surfCol[i];
             const float tube = tubeCol[i];
-            for (int y = surf + 40; y < rows; ++y) {
+            for (int y = startCol[i]; y < rows; ++y) {
                 const float fx = static_cast<float>(x);
                 const float fy = static_cast<float>(y);
                 const float qx = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 950u, 2) - 0.5f) * 2.0f;
@@ -1270,7 +1279,9 @@ static Mat topMatFor(int biome, float temp) {
     }
 }
 
-static Land landAt(int worldX) {
+namespace {
+
+Land landAt(int worldX) {
     const float x = static_cast<float>(worldX);
 
     Land land;
@@ -1316,21 +1327,21 @@ static Land landAt(int worldX) {
     const float soilOf[kBiomeCount] = {
         soil0,                                             // Plains
         2.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f, // Hills
-        1.0f,                                              // Mountains
+        3.0f,                                              // Mountains
         soil0,                                             // Canyons
         30.0f + noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f, // Desert
-        1.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f, // Tundra
-        1.0f,                                              // Volcanic
-        2.0f};                                             // Scrubland
+        3.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f, // Tundra
+        3.0f,                                              // Volcanic
+        4.0f};                                             // Scrubland
     const float dirtOf[kBiomeCount] = {
         dirt0,                                             // Plains
         8.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f, // Hills
-        2.0f,                                              // Mountains
+        10.0f,                                             // Mountains
         dirt0,                                             // Canyons
-        0.0f,                                              // Desert
-        4.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f, // Tundra
-        2.0f,                                              // Volcanic
-        6.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f}; // Scrubland
+        0.0f,                                              // Desert (sand sits on stone)
+        10.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f, // Tundra
+        10.0f,                                             // Volcanic
+        12.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f}; // Scrubland
     float soilW = 0.0f, dirtW = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) {
         soilW += biomeW[i] * soilOf[i];
@@ -1342,6 +1353,8 @@ static Land landAt(int worldX) {
     land.screeMat = land.topMat;
     return land;
 }
+
+}  // namespace
 
 // -- The endless world ------------------------------------------------------
 

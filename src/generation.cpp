@@ -337,6 +337,9 @@ constexpr float kBiomeScale = 2.8f;
 constexpr float kWorldScale = 1.6f;
 // How much taller the land rises and sinks above and below sea level.
 constexpr float kHeightScale = 1.5f;
+// How deep the surface layers go: the topsoil and the packed dirt under it are
+// this many times their original depth, before the rock starts.
+constexpr float kSurfaceDepth = 2.0f;
 
 static float climateTemperature(int worldX, int worldY) {
     const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);
@@ -1333,8 +1336,8 @@ static Land landAt(int worldX) {
         soilW += biomeW[i] * soilOf[i];
         dirtW += biomeW[i] * dirtOf[i];
     }
-    land.soilRows = static_cast<int>(std::lround(soilW));
-    land.dirtRows = static_cast<int>(std::lround(dirtW));
+    land.soilRows = static_cast<int>(std::lround(soilW * kSurfaceDepth));
+    land.dirtRows = static_cast<int>(std::lround(dirtW * kSurfaceDepth));
     land.bodyMat = biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f ? Mat::Sand : land.topMat;
     land.screeMat = land.topMat;
     return land;

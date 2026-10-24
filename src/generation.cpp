@@ -333,7 +333,9 @@ static Provinces provincesAt(int worldX) {
 }
 
 static float provinceTemperature(int id) {
-    return 0.15f + 0.70f * hash01(id, 1, static_cast<int>(kWorldSeed) + 1801);
+    // Smooth variation by province position: neighbouring provinces have
+    // similar temperatures, so hot and cold biomes never sit side by side.
+    return 0.15f + 0.70f * (0.5f + 0.5f * std::sin(static_cast<float>(id) * 0.7f + 1.3f));
 }
 
 static float provinceMoisture(int id) {

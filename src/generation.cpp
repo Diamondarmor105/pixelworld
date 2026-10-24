@@ -1159,6 +1159,36 @@ int screeRowsAt(int worldX) {
 // The land at one column: where the ground starts, how deep the layers under
 // it go, how much snow lies on top of it, and what the weather has left on
 // the surface.
+// The biome a column's surface follows before smoothing: the strongest biome,
+// with the second-strongest taking over in patches near a border.
+static int rawSurfaceBiome(int worldX) {
+    float w[kBiomeCount];
+    biomeWeights(worldX, profileAt(worldX), w);
+    int dom = 0;
+    for (int i = 1; i < kBiomeCount; ++i) if (w[i] > w[dom]) dom = i;
+    int sec = dom == 0 ? 1 : 0;
+    for (int i = 0; i < kBiomeCount; ++i)
+        if (i != dom && w[i] > w[sec]) sec = i;
+    const float share = w[sec] / (w[dom] + w[sec] + 1e-6f);
+    const float blendP = std::min(1.0f, std::max(0.0f, (share - 0.2f) / 0.3f));
+    // Sampled at a fixed row on a long scale, so the patches change slowly.
+    const float patch = noise2(static_cast<float>(worldX) / 160.0f, static_cast<float>(kSeaRow) / 160.0f, kWorldSeed + 75u);
+    return patch < blendP ? sec : dom;
+}
+
+// The surface biome after a majority vote over the columns either side, so no
+// biome shows up in a run of only a column or two: the border is long, smooth
+// runs, never single-column stripes.
+static int majoritySurfaceBiome(int worldX) {
+    constexpr int kRadius = 3;
+    int votes[kBiomeCount] = {0};
+    for (int k = -kRadius; k <= kRadius; ++k) votes[rawSurfaceBiome(worldX + k)]++;
+    const int centre = rawSurfaceBiome(worldX);
+    int best = centre;
+    for (int i = 0; i < kBiomeCount; ++i) if (votes[i] > votes[best]) best = i;
+    return best;
+}
+
 static Land landAt(int worldX) {
     const float x = static_cast<float>(worldX);
 
@@ -1184,19 +1214,7 @@ static Land landAt(int worldX) {
     biomeWeights(worldX, profile, biomeW);
     // The surface is the biome with the largest weight on the 2D climate map.
     // Borders fall along the smooth contours of that map, not in strips.
-    int dom = 0;
-    for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
-    // Transition: near a border the second-strongest biome takes over in
-    // patches. The patch noise is 2D (across x and along the surface row), so
-    // the patches are blobs, not strips. Its share is zero deep inside a biome
-    // and rises only in a narrow band around the border.
-    int sec = dom == 0 ? 1 : 0;
-    for (int i = 0; i < kBiomeCount; ++i)
-        if (i != dom && biomeW[i] > biomeW[sec]) sec = i;
-    const float share = biomeW[sec] / (biomeW[dom] + biomeW[sec] + 1e-6f);
-    const float blendP = std::min(1.0f, std::max(0.0f, (share - 0.2f) / 0.3f));
-    const float patch = noise2(x / 40.0f, static_cast<float>(profile) / 40.0f, kWorldSeed + 75u);
-    const int chosen = patch < blendP ? sec : dom;
+    const int chosen = majoritySurfaceBiome(worldX);
     switch (static_cast<BiomeType>(chosen)) {
         case BiomeType::Desert:
             land.topMat = Mat::Sand;

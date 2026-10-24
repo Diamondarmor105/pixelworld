@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <random>
 #include <vector>
 
 #include "blast.h"
@@ -1808,12 +1809,22 @@ int main(int argc, char** argv) {
     bool smoke = false;
     bool selftest = false;
     bool shot = false;
+    uint32_t seed = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--selftest") == 0) selftest = true;
         else if (std::strcmp(argv[i], "--smoke") == 0) smoke = true;
         else if (std::strcmp(argv[i], "--shot") == 0) shot = true;
+        else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) { seed = static_cast<uint32_t>(std::stoul(argv[++i])); }
     }
+
+    // Randomize the world seed unless one was given.
+    if (seed == 0) {
+        std::random_device rd;
+        seed = rd();
+    }
+    setWorldSeed(seed);
+    std::printf("world seed: %u\n", seed);
 
     if (selftest) return runSelfTest();
     if (shot) return runShot(argc, argv);

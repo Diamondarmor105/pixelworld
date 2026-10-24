@@ -8,12 +8,17 @@
 #include <cmath>
 #include <vector>
 
+// The seed of the whole world.
+static uint32_t kWorldSeed = 0x9E3779B9u;
+void setWorldSeed(uint32_t seed) { kWorldSeed = seed ? seed : 0x9E3779B9u; }
+uint32_t worldSeed() { return kWorldSeed; }
+
 namespace {
 
 // The seed of the whole world. One number decides everything: where the hills
-// are, where the caves run, what is buried where.
-constexpr uint32_t kWorldSeed = 0x9E3779B9u;
-
+// are, where the caves run, what is buried where. Randomized per run unless a
+// seed is supplied through setWorldSeed().
+// (Defined outside the anonymous namespace so main() can reach it.)
 // -- Noise -----------------------------------------------------------------
 //
 // Everything the generator decides comes out of these. They are not random:

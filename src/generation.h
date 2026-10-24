@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <vector>
 
 #include "world.h"
@@ -29,6 +31,10 @@ struct StructurePlacement {
     int kind;     // which kind of structure
     int variant;  // which pattern of that kind
 };
+
+// Seed control.
+void setWorldSeed(uint32_t seed);
+uint32_t worldSeed();
 
 // -- The endless world -----------------------------------------------------
 

@@ -942,7 +942,8 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     const float cold = std::min(1.0f, std::max(0.0f, (0.35f - climateTemperature(worldX)) / 0.12f));
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
     const float mountain = mountainHeightAt(worldX);
-    const float volcanic = hot * std::min(1.0f, std::max(0.0f, (mountain - 0.3f) / 0.3f));
+    const float volcanicNoise = fbm1(static_cast<float>(worldX) / 1200.0f, kWorldSeed + 950u, 2);
+    const float volcanic = hot * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.30f) / 0.20f));
     for (int i = 0; i < kZoneBiomes; ++i) out[i] *= (1.0f - desert - tundra - volcanic);
     out[kZoneBiomes] = desert;
     out[kZoneBiomes + 1] = tundra;
@@ -1121,6 +1122,14 @@ static Land landAt(int worldX) {
         land.dirtRows = 4 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
     } else if (biomeW[static_cast<int>(BiomeType::Volcanic)] > 0.5f) {
         land.topMat = Mat::Basalt;
+        land.soilRows = 1;
+        land.dirtRows = 2;
+    } else if (biomeW[static_cast<int>(BiomeType::Hills)] > 0.5f) {
+        land.topMat = Mat::Gravel;
+        land.soilRows = 2 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
+        land.dirtRows = 8 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f);
+    } else if (biomeW[static_cast<int>(BiomeType::Mountains)] > 0.5f) {
+        land.topMat = Mat::Stone;
         land.soilRows = 1;
         land.dirtRows = 2;
     } else if (temp < 0.30f) {

@@ -288,6 +288,8 @@ struct Land {
     Mat topMat;     // what the ground surface is made of
     Mat screeMat;   // what the rubble is made of
     Mat bodyMat;    // what the topsoil body is made of (sand under a desert)
+    Mat altMat;     // the neighbouring biome's surface material, for the checker
+    float altShare; // how much of the top layer takes altMat, 0..1
 };
 
 
@@ -925,7 +927,7 @@ static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
     }
     for (int i = 0; i < kZoneBiomes; ++i) out[i] /= sum;
 
-    const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.55f) / 0.12f));
+    const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.50f) / 0.28f));
     const float desert = hot * hot * (3.0f - 2.0f * hot);
     const float cold = std::min(1.0f, std::max(0.0f, (0.27f - climateTemperature(worldX, worldY)) / 0.10f));
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
@@ -1171,54 +1173,17 @@ static int smoothSurfaceRow(int worldX) {
     return total / (2 * kHalf + 1);
 }
 
-// The biome a column's surface follows before smoothing: the strongest biome,
-// with the second-strongest taking over in patches near a border.
-static int rawSurfaceBiome(int worldX) {
-    float w[kBiomeCount];
-    biomeWeights(worldX, smoothSurfaceRow(worldX), w);
-    // A slow 2D value decides the pick. Walking the biomes and taking the first
-    // whose running total passes it gives each biome a share of the patches
-    // equal to its weight: deep in a biome it is always picked, and across a
-    // border the two blend in patches whose mix follows the weights.
-    // The weights are sharpened first: raised to a high power, a strong biome
-    // takes nearly every column in its core, and only where two biomes are
-    // close in strength do their shares mix, in a checker of noise patches.
-    float sharp[kBiomeCount];
-    float total = 0.0f;
-    for (int i = 0; i < kBiomeCount; ++i) {
-        sharp[i] = std::pow(std::max(0.0f, w[i]), 8.0f);
-        total += sharp[i];
+// The top material a biome gives the ground surface.
+static Mat topMatFor(int biome, float temp) {
+    switch (static_cast<BiomeType>(biome)) {
+        case BiomeType::Desert: return Mat::Sand;
+        case BiomeType::Tundra: return Mat::Snow;
+        case BiomeType::Volcanic: return Mat::Basalt;
+        case BiomeType::Scrubland: return Mat::Gravel;
+        case BiomeType::Hills: return Mat::Gravel;
+        case BiomeType::Mountains: return Mat::Stone;
+        default: return temp < 0.30f ? Mat::Snow : Mat::Soil;
     }
-    if (total <= 0.0f) return static_cast<int>(BiomeType::Plains);
-    const float u = noise2(static_cast<float>(worldX) / 40.0f, static_cast<float>(kSeaRow) / 40.0f, kWorldSeed + 75u) * total;
-    float running = 0.0f;
-    for (int i = 0; i < kBiomeCount; ++i) {
-        running += sharp[i];
-        if (u < running) return i;
-    }
-    return kBiomeCount - 1;
-}
-
-// The surface biome after a majority vote over the columns either side, so no
-// biome shows up in a run of only a column or two: the border is long, smooth
-// runs, never single-column stripes.
-static int majoritySurfaceBiome(int worldX) {
-    constexpr int kRadius = 3;
-    int votes[kBiomeCount] = {0};
-    for (int k = -kRadius; k <= kRadius; ++k) votes[rawSurfaceBiome(worldX + k)]++;
-    const int centre = rawSurfaceBiome(worldX);
-    int best = centre;
-    for (int i = 0; i < kBiomeCount; ++i) if (votes[i] > votes[best]) best = i;
-    return best;
-}
-
-// How much of a biome's own layer depth a column gets, from that biome's smooth
-// weight. It rises from nothing at the edge of the biome to full depth well
-// inside it, so a deep layer (sand, snow, basalt) tapers into the rock instead
-// of ending in a vertical wall.
-static float depthShare(float weight) {
-    const float t = std::min(1.0f, std::max(0.0f, weight * 1.5f));
-    return t * t * (3.0f - 2.0f * t);
 }
 
 static Land landAt(int worldX) {
@@ -1244,24 +1209,19 @@ static Land landAt(int worldX) {
     // The desert is dune sand: a deep layer over a thin dirt floor.
     float biomeW[kBiomeCount];
     biomeWeights(worldX, smoothSurfaceRow(worldX), biomeW);
-    // The surface is the biome with the largest weight on the 2D climate map.
-    // Borders fall along the smooth contours of that map, not in strips.
+    // The surface is the strongest biome on the 2D climate map.
     int dom = 0;
     for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
-    // Transition: near a border the second-strongest biome takes over in
-    // patches. The patch noise is 2D (across x and along the surface row), so
-    // the patches are blobs, not strips. Its share is zero deep inside a biome
-    // and rises only in a narrow band around the border.
-    const int chosen = majoritySurfaceBiome(worldX);
-    switch (static_cast<BiomeType>(chosen)) {
-        case BiomeType::Desert: land.topMat = Mat::Sand; break;
-        case BiomeType::Tundra: land.topMat = Mat::Snow; break;
-        case BiomeType::Volcanic: land.topMat = Mat::Basalt; break;
-        case BiomeType::Scrubland: land.topMat = Mat::Gravel; break;
-        case BiomeType::Hills: land.topMat = Mat::Gravel; break;
-        case BiomeType::Mountains: land.topMat = Mat::Stone; break;
-        default: land.topMat = temp < 0.30f ? Mat::Snow : Mat::Soil; break;
-    }
+    int sec = dom == 0 ? 1 : 0;
+    for (int i = 0; i < kBiomeCount; ++i)
+        if (i != dom && biomeW[i] > biomeW[sec]) sec = i;
+    // Where two biomes are close in strength, the second one's share is large
+    // and the layers beneath mix the two as a checker (see generateChunk). Deep
+    // inside one biome the share is zero, so the biome stays pure.
+    const float share = biomeW[sec] / (biomeW[dom] + biomeW[sec] + 1e-6f);
+    land.altShare = std::min(1.0f, std::max(0.0f, (share - 0.02f) / 0.96f));
+    land.topMat = topMatFor(dom, temp);
+    land.altMat = topMatFor(sec, temp);
 
     // Layer depths are a weighted average over every biome, so no single biome
     // "wins" a depth: the sand, snow and basalt layers thin out smoothly across
@@ -1338,6 +1298,12 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
                                       readSample(strata.temperature, y),
                                       readSample(strata.moisture, y));
                 }
+            }
+            // Biome border checker: in the topsoil, cells of the neighbouring
+            // biome appear in a 2D noise checker, in proportion to its share.
+            if (y >= surface && land.altShare > 0.0f && y - land.profile < land.soilRows &&
+                noise2(static_cast<float>(worldX) / 5.0f, static_cast<float>(y) / 5.0f, kWorldSeed + 80u) < land.altShare) {
+                m = land.altMat;
             }
             const size_t cell = chunk.index(lx, y);
             chunk.cells[cell] = static_cast<uint8_t>(m);

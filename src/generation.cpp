@@ -1024,59 +1024,66 @@ static float glacialValleys(float x) {
 static float biomeOffset(BiomeType biome, float x) {
     switch (biome) {
         case BiomeType::Plains: {
-            // A gentle ripple, plus shallow drainage basins where the ground
-            // dips and moisture pools across wide stretches.
-            const float ripple = shapeWave(x, 150.0f, kWorldSeed + 17u, 1) * 8.0f;
-            const float basin = std::max(0.0f, fbm1(x / 520.0f, kWorldSeed + 1000u, 2) - 0.6f) * 100.0f;
-            return -ripple + basin;
+            // Smooth flat ground, with broad shallow basins where moisture pools.
+            const float fineRipple = shapeWave(x, 150.0f, kWorldSeed + 17u, 1) * 4.0f;
+            const float basinMask = fbm1(x / 2000.0f, kWorldSeed + 101u, 2);
+            const float depression = basinMask < 0.35f ? (0.35f - basinMask) * 15.0f : 0.0f;
+            return -fineRipple - depression;
         }
         case BiomeType::Hills: {
-            // Cuestas: each hill rises gently on one side and drops steeply
-            // off the other, like a sedimentary ridge.
-            const float phase = x / 700.0f - std::floor(x / 700.0f);
-            constexpr float kRise = 0.8f;
-            const float cuesta = phase < kRise
-                ? 60.0f * (phase / kRise) * (phase / kRise)
-                : 60.0f * (1.0f - (phase - kRise) / (1.0f - kRise));
-            const float rough = shapeWave(x, 90.0f, kWorldSeed + 13u, 2);
-            return -cuesta + rough * 25.0f;
+            // Asymmetric cuestas: a long climb, then a steep drop.
+            constexpr float kWaveLength = 300.0f;
+            const float phase = x / kWaveLength - std::floor(x / kWaveLength);
+            const float cuesta = phase < 0.75f
+                ? std::sin(phase * 2.094f) * 40.0f
+                : (1.0f - (phase - 0.75f) / 0.25f) * 40.0f;
+            return -cuesta - shapeWave(x, 60.0f, kWorldSeed + 13u, 1) * 8.0f;
         }
         case BiomeType::Mountains: {
-            // Fault-block ranges, with sharp ridged crests only on the peaks.
+            // Fault-block ranges. The upper part of each range breaks into
+            // jagged ridges, and glacial valleys cut the rock below them.
             const float m = mountainHeightAt(static_cast<int>(std::lround(x)));
-            const float jag = ridged1(x / 160.0f, kWorldSeed + 1020u, 3) * m * 60.0f;
-            return -40.0f - m * 260.0f - jag + glacialValleys(x);
+            const float high = std::min(1.0f, std::max(0.0f, (m - 0.66f) / 0.34f));
+            const float jag = ridged1(x / 300.0f, kWorldSeed + 95u, 3) * 50.0f * high;
+            return -40.0f - m * 280.0f - jag + glacialValleys(x);
         }
         case BiomeType::Desert: {
-            // Dunes whose height varies across the desert: tall megadunes in
-            // some stretches, low rippled flats in others.
-            const float phase = x / 280.0f - std::floor(x / 280.0f);
+            // Dune fields: the spacing and height change slowly across the
+            // desert, from tall megadunes to low rippled flats. The spacing is
+            // set by a warp on the phase, which keeps the phase rising with x
+            // (dividing x by a varying wavelength would run it backwards far out).
+            const float warp = (fbm1(x / 1200.0f, kWorldSeed + 500u, 2) - 0.5f) * 0.6f;
+            const float cycles = x / 240.0f + warp;
+            const float phase = cycles - std::floor(cycles);
             constexpr float kCrest = 0.85f;
+            const float duneAmplitude = 25.0f + fbm1(x / 400.0f, kWorldSeed + 510u, 1) * 20.0f;
             const float dune = phase < kCrest
-                ? 45.0f * (phase / kCrest) * (phase / kCrest)
-                : 45.0f * (1.0f - (phase - kCrest) / (1.0f - kCrest));
-            const float scale = 0.55f + 0.9f * fbm1(x / 1400.0f, kWorldSeed + 1030u, 2);
-            return dune * scale + shapeWave(x, 40.0f, kWorldSeed + 80u, 1) * 3.0f;
+                ? duneAmplitude * (phase / kCrest) * (phase / kCrest)
+                : duneAmplitude * (1.0f - (phase - kCrest) / (1.0f - kCrest));
+            return dune + shapeWave(x, 35.0f, kWorldSeed + 80u, 1) * 2.5f;
         }
         case BiomeType::Tundra: {
-            // Rolling frozen ground with frost mounds (pingos) scattered over it.
-            const float hills = shapeWave(x, 600.0f, kWorldSeed + 90u, 2);
-            return -hills * 20.0f - scatter(x, 48.0f, 1040u, 14.0f, 14.0f, 24.0f);
+            // Rolling permafrost ground, with frost-heaved bumps and pingos.
+            const float hills = shapeWave(x, 600.0f, kWorldSeed + 90u, 2) * 20.0f;
+            const float frostHeave = std::fabs(fbm1(x / 35.0f, kWorldSeed + 92u, 3)) * 5.0f;
+            return -hills - frostHeave - scatter(x, 48.0f, 1040u, 14.0f, 14.0f, 24.0f);
         }
         case BiomeType::Volcanic: {
-            // Sharp volcanic ridges, with craters hollowed out of the summits.
+            // Ridged volcanic peaks. Near the top the summit is pressed down,
+            // and craters are cut in with scatter.
             const float crest = ridged1(x / 800.0f, kWorldSeed + 95u, 3);
-            return -crest * 120.0f + scatter(x, 900.0f, 1050u, 40.0f, 40.0f, 70.0f);
+            const float calderaDip = crest > 0.72f ? (crest - 0.72f) * 90.0f : 0.0f;
+            return -(crest * 130.0f - calderaDip) + scatter(x, 900.0f, 1050u, 40.0f, 40.0f, 70.0f);
         }
         case BiomeType::Scrubland: {
             // Low, uneven ground with little relief.
             return -shapeWave(x, 300.0f, kWorldSeed + 100u, 2) * 12.0f;
         }
         case BiomeType::Canyons: {
-            // V-shaped trenches whose walls step down in rock benches.
-            const float trench = std::fabs(shapeWave(x, 600.0f, kWorldSeed + 45u, 2)) * 70.0f;
-            const float bench = smoothStair(trench, 12.0f);
-            return 0.5f * trench + 0.5f * bench;
+            // Trench walls that step down in flat rock benches.
+            const float trench = std::fabs(shapeWave(x, 600.0f, kWorldSeed + 45u, 2)) * 80.0f;
+            const float bench = smoothStair(trench, 14.0f);
+            return 0.25f * trench + 0.75f * bench;
         }
     }
     return 0.0f;

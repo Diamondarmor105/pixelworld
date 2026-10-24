@@ -1186,7 +1186,18 @@ static Land landAt(int worldX) {
     // Borders fall along the smooth contours of that map, not in strips.
     int dom = 0;
     for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
-    switch (static_cast<BiomeType>(dom)) {
+    // Transition: near a border the second-strongest biome takes over in
+    // patches. The patch noise is 2D (across x and along the surface row), so
+    // the patches are blobs, not strips. Its share is zero deep inside a biome
+    // and rises only in a narrow band around the border.
+    int sec = dom == 0 ? 1 : 0;
+    for (int i = 0; i < kBiomeCount; ++i)
+        if (i != dom && biomeW[i] > biomeW[sec]) sec = i;
+    const float share = biomeW[sec] / (biomeW[dom] + biomeW[sec] + 1e-6f);
+    const float blendP = std::min(1.0f, std::max(0.0f, (share - 0.2f) / 0.3f));
+    const float patch = noise2(x / 40.0f, static_cast<float>(profile) / 40.0f, kWorldSeed + 75u);
+    const int chosen = patch < blendP ? sec : dom;
+    switch (static_cast<BiomeType>(chosen)) {
         case BiomeType::Desert:
             land.topMat = Mat::Sand;
             land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);

@@ -899,7 +899,7 @@ static float rawMountainHeightAt(int worldX) {
         nearest = std::min(nearest, d);
     }
     const float seamness = 1.0f - std::min(1.0f, (second - nearest) / (0.35f * plateCell));
-    crest *= 0.35f + 0.65f * seamness * seamness;
+    crest *= 1.0f + 0.6f * seamness * seamness;
 
     // Where the ranges are. Most of the world has none: the ranges cross it
     // now and then, with wide plains between them.

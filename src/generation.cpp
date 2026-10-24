@@ -298,69 +298,24 @@ struct Land {
 // from a second, slower wave that does not care about the height at all.
 // Both are maps over the world rather than over the rock, so a whole region
 // shares one climate and the rock under it was laid down in that climate.
-// Provinces: the world is divided into regions, each with its own climate -
-// a desert, a tundra, a wet forest. Each province has a random point along the
-// world's length, and a column belongs to the province whose point is nearest.
-// Where two provinces meet, their climates blend across a band, so the border
-// is a gradual change rather than a line.
-constexpr float kProvinceSpacing = 900.0f;
-constexpr float kProvinceBlend = 0.35f;   // blend band, as a share of the spacing
+// Climate: a 2D map. Temperature and moisture vary smoothly across the world
+// in both directions, so biome borders are curves over the map rather than
+// strips. Temperature falls with height above sea level, so highlands are
+// colder. The seed shifts the whole map, so every world has its own climate.
+constexpr int kSeaRow = 330;   // the row of sea level
 
-struct Provinces {
-    int nearest;
-    int second;
-    float weight;   // 1 deep inside the nearest province, 0.5 on the border
-};
-
-static Provinces provincesAt(int worldX) {
-    const float fx = static_cast<float>(worldX);
-    const int cell = static_cast<int>(std::floor(fx / kProvinceSpacing));
-    float bestD = 1e9f, secondD = 1e9f;
-    int best = 0, second = 0;
-    for (int c = cell - 2; c <= cell + 2; ++c) {
-        const int id = c;
-        const float point = (static_cast<float>(c) + hash01(id, 0, static_cast<int>(kWorldSeed) + 1800)) * kProvinceSpacing;
-        const float d = std::fabs(fx - point);
-        if (d < bestD) {
-            secondD = bestD; second = best;
-            bestD = d; best = id;
-        } else if (d < secondD) {
-            secondD = d; second = id;
-        }
-    }
-    const float band = kProvinceBlend * kProvinceSpacing;
-    float t = std::min(1.0f, std::max(0.0f, (secondD - bestD) / band));
-    t = t * t * (3.0f - 2.0f * t);
-    return {best, second, 0.5f + 0.5f * t};
+static float climateTemperature(int worldX, int worldY) {
+    const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);
+    const float field = fbm2(fx / 1400.0f, fy / 1000.0f, kWorldSeed + 201u, 3) - 0.5f;
+    const float shift = (hash01(0, 7, static_cast<int>(kWorldSeed) + 1803) - 0.5f) * 0.2f;
+    const float altitude = std::max(0.0f, static_cast<float>(kSeaRow) - fy);
+    return std::min(1.0f, std::max(0.0f, 0.5f + field * 1.8f + shift - altitude / 1200.0f));
 }
 
-static float provinceTemperature(int id) {
-    // Smooth variation by province position: neighbouring provinces have
-    // similar temperatures, so hot and cold biomes never sit side by side.
-    // The phase comes from the world seed, so each world has its own pattern
-    // of hot and cold provinces.
-    const float phase = hash01(0, 7, static_cast<int>(kWorldSeed) + 1803) * 6.2831853f;
-    return 0.15f + 0.70f * (0.5f + 0.5f * std::sin(static_cast<float>(id) * 0.7f + phase));
-}
-
-static float provinceMoisture(int id) {
-    return 0.10f + 0.80f * hash01(id, 2, static_cast<int>(kWorldSeed) + 1802);
-}
-
-static float climateTemperature(int worldX) {
-    const Provinces p = provincesAt(worldX);
-    const float base = provinceTemperature(p.nearest) * p.weight +
-                       provinceTemperature(p.second) * (1.0f - p.weight);
-    return std::min(1.0f, std::max(0.0f, base + (fbm1(static_cast<float>(worldX) / 8000.0f, kWorldSeed + 201u, 3) - 0.5f) * 0.2f));
-}
-
-static float climateMoisture(int worldX, int y) {
-    const Provinces p = provincesAt(worldX);
-    const float base = provinceMoisture(p.nearest) * p.weight +
-                       provinceMoisture(p.second) * (1.0f - p.weight);
-    const float wander = fbm2(static_cast<float>(worldX) / 6000.0f,
-                              static_cast<float>(y) / 4000.0f, kWorldSeed + 211u, 2);
-    return std::min(1.0f, std::max(0.0f, base + (wander - 0.5f) * 0.25f));
+static float climateMoisture(int worldX, int worldY) {
+    const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);
+    const float field = fbm2(fx / 1200.0f, fy / 900.0f, kWorldSeed + 211u, 3) - 0.5f;
+    return std::min(1.0f, std::max(0.0f, 0.5f + field * 1.8f));
 }
 
 // The rock's bands and its climate, sampled down a column.
@@ -389,7 +344,6 @@ struct Strata {
     // Read the noise down one column.
     void sampleColumn(int worldX, int surface) {
         const float fx = static_cast<float>(worldX);
-        const float cold = climateTemperature(worldX);
         for (size_t i = 0; i < band.size(); ++i) {
             const float fy = static_cast<float>(static_cast<int>(i) * kStep);
 
@@ -424,7 +378,7 @@ struct Strata {
             // Sharpen transitions so beds have crisp edges.
             b = b * b * (3.0f - 2.0f * b);
             band[i] = b;
-            temperature[i] = cold;
+            temperature[i] = climateTemperature(worldX, static_cast<int>(i) * kStep);
             moisture[i] = climateMoisture(worldX, static_cast<int>(i) * kStep);
         }
         (void)surface;
@@ -959,7 +913,7 @@ constexpr float kBiomeReach = 0.12f;   // how far a biome's influence spreads on
 // bell around its centre on the zone map. The bells never reach zero, so some
 // biome always applies and the blend has no gaps, however the zone map varies.
 // The weights sum to 1.
-static void biomeWeights(int worldX, float out[kBiomeCount]) {
+static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
     const float zone = fbm1(static_cast<float>(worldX) / 4000.0f, kWorldSeed + 500u, 2);
     float sum = 0.0f;
     for (int i = 0; i < kZoneBiomes; ++i) {
@@ -969,12 +923,16 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     }
     for (int i = 0; i < kZoneBiomes; ++i) out[i] /= sum;
 
-    const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX) - 0.55f) / 0.12f));
+    const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.55f) / 0.12f));
     const float desert = hot * hot * (3.0f - 2.0f * hot);
-    const float cold = std::min(1.0f, std::max(0.0f, (0.35f - climateTemperature(worldX)) / 0.12f));
+    const float cold = std::min(1.0f, std::max(0.0f, (0.27f - climateTemperature(worldX, worldY)) / 0.10f));
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
-    const float volcanicNoise = fbm1(static_cast<float>(worldX) / 1200.0f, kWorldSeed + 950u, 2);
-    const float volcanic = hot * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.30f) / 0.20f));
+    // Volcanic country: patches of hot ground where a 2D noise runs high.
+    const float volcanicNoise = fbm2(static_cast<float>(worldX) / 900.0f, static_cast<float>(worldY) / 700.0f, kWorldSeed + 950u, 2);
+    // Volcanic ground sits in the warm band just below the desert, so the two
+    // can win in different places instead of the desert always taking over.
+    const float warm = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.42f) / 0.15f));
+    const float volcanic = warm * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.45f) / 0.15f));
     // Never negative: where the special biomes together cover everything, the
     // zone biomes simply step aside.
     const float zoneShare = std::max(0.0f, 1.0f - desert - tundra - volcanic);
@@ -985,7 +943,8 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
     // Scrubland: the ecotone between desert and plains. It peaks where the two
     // are equally strong and fades out in the core of either. Weights are then
     // renormalized so they still sum to 1.
-    out[kZoneBiomes + 3] = 4.0f * out[kZoneBiomes] * out[static_cast<int>(BiomeType::Plains)];
+    // A ring around the desert edge: it peaks where desert is half strong.
+    out[kZoneBiomes + 3] = 4.0f * out[kZoneBiomes] * (1.0f - out[kZoneBiomes]);
     float total = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) total += out[i];
     if (total <= 1e-6f) { out[static_cast<int>(BiomeType::Plains)] = 1.0f; return; }
@@ -995,7 +954,7 @@ static void biomeWeights(int worldX, float out[kBiomeCount]) {
 // How much of the volcanic biome this column is (0..1).
 static float volcanicWeightAt(float x) {
     float w[kBiomeCount];
-    biomeWeights(static_cast<int>(std::lround(x)), w);
+    biomeWeights(static_cast<int>(std::lround(x)), kSeaRow, w);
     return w[static_cast<int>(BiomeType::Volcanic)];
 }
 
@@ -1039,7 +998,7 @@ static float glacialValleys(float x) {
     }
     // Only where the land is high and wet: the ice needed to carve them.
     const float m = mountainHeightAt(static_cast<int>(std::lround(x)));
-    const float wet = std::min(1.0f, std::max(0.0f, (climateMoisture(static_cast<int>(std::lround(x)), 0) - 0.30f) / 0.20f));
+    const float wet = std::min(1.0f, std::max(0.0f, (climateMoisture(static_cast<int>(std::lround(x)), kSeaRow) - 0.30f) / 0.20f));
     const float high = std::min(1.0f, std::max(0.0f, (m - 0.02f) / 0.10f));
     return total * wet * high;
 }
@@ -1121,7 +1080,7 @@ static float profileHeight(int worldX) {
     const float eroded = channel * channel * 26.0f * fbm1(x / 1600.0f, kWorldSeed + 68u, 2);
 
     float w[kBiomeCount];
-    biomeWeights(worldX, w);
+    biomeWeights(worldX, kSeaRow, w);
     float offset = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) {
         if (w[i] <= 0.0f) continue;
@@ -1161,11 +1120,11 @@ int profileAt(int worldX) {
     // the steps sit where the country is arid and nowhere else.
     const float raw = profileHeight(worldX);
     float biomeW[kBiomeCount];
-    biomeWeights(worldX, biomeW);
+    biomeWeights(worldX, kSeaRow, biomeW);
     // Terracing is for the dry country around the desert; the dunes keep
     // their own shape.
-    const float arid = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX) - 0.55f) / 0.10f)) *
-                       std::min(1.0f, std::max(0.0f, (0.40f - climateMoisture(worldX, 0)) / 0.10f)) *
+    const float arid = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, kSeaRow) - 0.55f) / 0.10f)) *
+                       std::min(1.0f, std::max(0.0f, (0.40f - climateMoisture(worldX, kSeaRow)) / 0.10f)) *
                        (1.0f - biomeW[static_cast<int>(BiomeType::Desert)]);
     constexpr float kBench = 14.0f;   // rows per step
     const float stepped = std::floor(raw / kBench) * kBench;
@@ -1209,7 +1168,7 @@ static Land landAt(int worldX) {
     // steep-face or hollow rules. What it is made of depends only on the
     // climate of the province it is in.
     const int profile = profileAt(worldX);
-    const float temp = climateTemperature(worldX);
+    const float temp = climateTemperature(worldX, profile);
 
     land.profile = profile;
     land.surface = profile;
@@ -1222,50 +1181,45 @@ static Land landAt(int worldX) {
     // Cold country is snow, hot country is sand, everything else is dirt.
     // The desert is dune sand: a deep layer over a thin dirt floor.
     float biomeW[kBiomeCount];
-    biomeWeights(worldX, biomeW);
-    // Biome transitions: each column draws a jittered threshold and takes the
-    // first biome whose weight beats it. Where two biomes meet their weights
-    // blend, so the two surfaces interleave in a mixed band, not a straight line.
-    const float jit = noise1(x / 9.0f, kWorldSeed + 70u);
-    const float jit2 = noise1(x / 13.0f, kWorldSeed + 71u);
-    // How strongly this column is mixed: 0 deep inside one biome, 1 where
-    // several share it equally. The jitter is squeezed toward the middle where
-    // one biome dominates, so patches of a neighbour only show mid-border.
-    float maxW = 0.0f;
-    for (int i = 0; i < kBiomeCount; ++i) maxW = std::max(maxW, biomeW[i]);
-    const float mix = std::min(1.0f, std::max(0.0f, (1.0f - maxW) * 2.0f));
-    auto beats = [&](BiomeType bt, float j) {
-        const float t = 0.5f + (j - 0.5f) * mix;
-        return biomeW[static_cast<int>(bt)] > t;
-    };
-    if (beats(BiomeType::Desert, jit)) {
-        land.topMat = Mat::Sand;
-        land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
-        land.dirtRows = 0;
-    } else if (beats(BiomeType::Tundra, jit2)) {
-        land.topMat = Mat::Snow;
-        land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f);
-        land.dirtRows = 4 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
-    } else if (beats(BiomeType::Volcanic, jit)) {
-        land.topMat = Mat::Basalt;
-        land.soilRows = 1;
-        land.dirtRows = 2;
-    } else if (beats(BiomeType::Scrubland, jit2)) {
-        land.topMat = Mat::Gravel;
-        land.soilRows = 2;
-        land.dirtRows = 6 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
-    } else if (beats(BiomeType::Hills, jit2)) {
-        land.topMat = Mat::Gravel;
-        land.soilRows = 2 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
-        land.dirtRows = 8 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f);
-    } else if (beats(BiomeType::Mountains, jit)) {
-        land.topMat = Mat::Stone;
-        land.soilRows = 1;
-        land.dirtRows = 2;
-    } else if (temp < 0.30f) {
-        land.topMat = Mat::Snow;
-    } else {
-        land.topMat = Mat::Soil;
+    biomeWeights(worldX, profile, biomeW);
+    // The surface is the biome with the largest weight on the 2D climate map.
+    // Borders fall along the smooth contours of that map, not in strips.
+    int dom = 0;
+    for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
+    switch (static_cast<BiomeType>(dom)) {
+        case BiomeType::Desert:
+            land.topMat = Mat::Sand;
+            land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
+            land.dirtRows = 0;
+            break;
+        case BiomeType::Tundra:
+            land.topMat = Mat::Snow;
+            land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f);
+            land.dirtRows = 4 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
+            break;
+        case BiomeType::Volcanic:
+            land.topMat = Mat::Basalt;
+            land.soilRows = 1;
+            land.dirtRows = 2;
+            break;
+        case BiomeType::Scrubland:
+            land.topMat = Mat::Gravel;
+            land.soilRows = 2;
+            land.dirtRows = 6 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
+            break;
+        case BiomeType::Hills:
+            land.topMat = Mat::Gravel;
+            land.soilRows = 2 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
+            land.dirtRows = 8 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f);
+            break;
+        case BiomeType::Mountains:
+            land.topMat = Mat::Stone;
+            land.soilRows = 1;
+            land.dirtRows = 2;
+            break;
+        default:
+            land.topMat = temp < 0.30f ? Mat::Snow : Mat::Soil;
+            break;
     }
     land.screeMat = land.topMat;
     return land;
@@ -1326,7 +1280,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     static const Mat kPocketMaterials[3] = {Mat::Sand, Mat::Gravel, Mat::Clay};
     for (int i = 0; i < 6; ++i) {
         const int kindHash = static_cast<int>(hash01(index, i, 91));
-        const float temp = climateTemperature(baseX + 10);
+        const float temp = climateTemperature(baseX + 10, 400);
         const float moist = climateMoisture(baseX + 10, 400);
         Mat m = Mat::Gravel;
         if (temp > 0.62f && moist < 0.38f) m = Mat::Sand;
@@ -1389,7 +1343,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         // Only on the living ground of the plains and hills: no trees in the
         // desert, the tundra, the volcanic country or on bare rock.
         float bw[kBiomeCount];
-        biomeWeights(wx, bw);
+        biomeWeights(wx, profileAt(wx), bw);
         const float living = bw[static_cast<int>(BiomeType::Plains)] + bw[static_cast<int>(BiomeType::Hills)];
         if (living < 0.3f || landAt(wx).topMat != Mat::Soil) continue;
 

@@ -628,10 +628,6 @@ void carveChunkCaves(World& world, int chunk) {
             if (world.at(x, y) == Mat::Water || world.at(x, y + 1) == Mat::Water) continue;
             if (world.at(x, y) == Mat::Air) continue;
             if (world.at(x, y) == Mat::Bedrock) continue;
-            if (world.at(x, y) == Mat::Soil) continue;
-            if (world.at(x, y) == Mat::PackedDirt) continue;
-            if (world.at(x, y) == Mat::Sand) continue;
-            if (world.at(x, y) == Mat::Snow) continue;
             world.set(x, y, Mat::Air);
         }
 }

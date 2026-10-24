@@ -546,7 +546,7 @@ void carveChunkCaves(World& world, int chunk) {
     std::vector<uint8_t> mask(static_cast<size_t>(winW) * rows, 0);
     for (int x = winX0; x < winX0 + winW; ++x) {
         const int surf = groundRow(x);
-        for (int y = surf + 12; y < rows; ++y) {
+        for (int y = surf + 40; y < rows; ++y) {
             const float fx = static_cast<float>(x);
             const float fy = static_cast<float>(y);
             const float qx = (fbm2(fx / 280.0f, fy / 220.0f, kWorldSeed + 950u, 2) - 0.5f) * 2.0f;

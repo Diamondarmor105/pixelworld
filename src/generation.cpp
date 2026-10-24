@@ -1326,6 +1326,49 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
 
+    // 2b. Surface pools, by biome: lakes on the plains, frozen lakes on the
+    //     tundra, lava in the craters of the volcanic country. Each pool sits in
+    //     a cell of kPoolCell columns, chosen by a hash. Its water level is the
+    //     lower of its two rims, so it cannot spill over the edge.
+    constexpr int kPoolCell = 180;
+    constexpr int kPoolReach = 40;
+    const int firstCell = static_cast<int>(std::floor(static_cast<float>(baseX - kPoolReach) / kPoolCell));
+    const int lastCell = static_cast<int>(std::floor(static_cast<float>(baseX + Chunk::WIDTH + kPoolReach) / kPoolCell));
+    for (int c = firstCell; c <= lastCell; ++c) {
+        if (hash01(c, 0, static_cast<int>(kWorldSeed) + 1700) > 0.8f) continue;
+        const int centre = static_cast<int>((static_cast<float>(c) + hash01(c, 1, static_cast<int>(kWorldSeed) + 1701)) * kPoolCell);
+        const int radius = 14 + static_cast<int>(hash01(c, 2, static_cast<int>(kWorldSeed) + 1702) * 16.0f);
+        float w[kBiomeCount];
+        biomeWeights(centre, smoothSurfaceRow(centre), w);
+        int dom = 0;
+        for (int i = 1; i < kBiomeCount; ++i) if (w[i] > w[dom]) dom = i;
+        const BiomeType biome = static_cast<BiomeType>(dom);
+        Mat liquid;
+        bool frozen = false;
+        if (biome == BiomeType::Plains) liquid = Mat::Water;
+        else if (biome == BiomeType::Tundra) { liquid = Mat::Water; frozen = true; }
+        else if (biome == BiomeType::Volcanic) liquid = Mat::Lava;
+        else continue;
+        const int rimW = std::min(profileAt(centre - radius), profileAt(centre + radius));
+        if (profileAt(centre) - rimW < 2) continue;
+        const int x0 = std::max(baseX, centre - radius);
+        const int x1 = std::min(baseX + Chunk::WIDTH - 1, centre + radius);
+        // The bed is dug a few rows below the water level, so the pool has depth.
+        const int depth = 8 + static_cast<int>(hash01(c, 3, static_cast<int>(kWorldSeed) + 1703) * 6.0f);
+        for (int x = x0; x <= x1; ++x) {
+            // Interior columns are dug to the full depth; the two edge columns
+            // keep the water at the rim, so the pool stays inside its banks.
+            const bool edge = x == centre - radius || x == centre + radius;
+            const int bed = edge ? profileAt(x) : rimW + depth;
+            for (int y = rimW; y < bed; ++y) {
+                const size_t cell = chunk.index(x - baseX, y);
+                const bool top = frozen && y == rimW;
+                chunk.cells[cell] = static_cast<uint8_t>(top ? Mat::GlacialIce : liquid);
+                chunk.mass[cell] = top ? 0.0f : 1.0f;
+            }
+        }
+    }
+
     // 3. Pockets of loose material buried in the ground: sand, gravel, clay.
     //    They are big - a pocket you can dig a hole in - and their outline is
     //    lumpy, the way a pocket of loose sand in the rock is. A smooth oval

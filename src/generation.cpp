@@ -287,6 +287,7 @@ struct Land {
     int dirtRows;   // how deep the packed dirt goes under the soil
     Mat topMat;     // what the ground surface is made of
     Mat screeMat;   // what the rubble is made of
+    Mat bodyMat;    // what the topsoil body is made of (sand under a desert)
 };
 
 
@@ -405,7 +406,8 @@ static float readSample(const std::vector<float>& samples, int y) {
 // The climate decides what the rock is: a hot dry place lays down sand, a
 // warm wet one lays down clay, and a cold one lays down plain limestone.
 Mat layerMaterial(const Land& land, int depth, float band, float temp, float moist) {
-    if (depth <= land.soilRows) return land.topMat;
+    if (depth <= 0) return land.topMat;
+    if (depth <= land.soilRows) return land.bodyMat;
     if (depth <= land.soilRows + land.dirtRows) return Mat::PackedDirt;
     // Thin beds of other rock in the stone. The band value is a sawtooth that
     // runs from 0 to 1 through each bed, so the seams are a few rows wide
@@ -1199,6 +1201,15 @@ static int majoritySurfaceBiome(int worldX) {
     return best;
 }
 
+// How much of a biome's own layer depth a column gets, from that biome's smooth
+// weight. It rises from nothing at the edge of the biome to full depth well
+// inside it, so a deep layer (sand, snow, basalt) tapers into the rock instead
+// of ending in a vertical wall.
+static float depthShare(float weight) {
+    const float t = std::min(1.0f, std::max(0.0f, weight * 1.5f));
+    return t * t * (3.0f - 2.0f * t);
+}
+
 static Land landAt(int worldX) {
     const float x = static_cast<float>(worldX);
 
@@ -1224,42 +1235,54 @@ static Land landAt(int worldX) {
     biomeWeights(worldX, smoothSurfaceRow(worldX), biomeW);
     // The surface is the biome with the largest weight on the 2D climate map.
     // Borders fall along the smooth contours of that map, not in strips.
+    int dom = 0;
+    for (int i = 1; i < kBiomeCount; ++i) if (biomeW[i] > biomeW[dom]) dom = i;
+    // Transition: near a border the second-strongest biome takes over in
+    // patches. The patch noise is 2D (across x and along the surface row), so
+    // the patches are blobs, not strips. Its share is zero deep inside a biome
+    // and rises only in a narrow band around the border.
     const int chosen = majoritySurfaceBiome(worldX);
     switch (static_cast<BiomeType>(chosen)) {
-        case BiomeType::Desert:
-            land.topMat = Mat::Sand;
-            land.soilRows = 30 + static_cast<int>(noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f);
-            land.dirtRows = 0;
-            break;
-        case BiomeType::Tundra:
-            land.topMat = Mat::Snow;
-            land.soilRows = 1 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f);
-            land.dirtRows = 4 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
-            break;
-        case BiomeType::Volcanic:
-            land.topMat = Mat::Basalt;
-            land.soilRows = 1;
-            land.dirtRows = 2;
-            break;
-        case BiomeType::Scrubland:
-            land.topMat = Mat::Gravel;
-            land.soilRows = 2;
-            land.dirtRows = 6 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f);
-            break;
-        case BiomeType::Hills:
-            land.topMat = Mat::Gravel;
-            land.soilRows = 2 + static_cast<int>(noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f);
-            land.dirtRows = 8 + static_cast<int>(noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f);
-            break;
-        case BiomeType::Mountains:
-            land.topMat = Mat::Stone;
-            land.soilRows = 1;
-            land.dirtRows = 2;
-            break;
-        default:
-            land.topMat = temp < 0.30f ? Mat::Snow : Mat::Soil;
-            break;
+        case BiomeType::Desert: land.topMat = Mat::Sand; break;
+        case BiomeType::Tundra: land.topMat = Mat::Snow; break;
+        case BiomeType::Volcanic: land.topMat = Mat::Basalt; break;
+        case BiomeType::Scrubland: land.topMat = Mat::Gravel; break;
+        case BiomeType::Hills: land.topMat = Mat::Gravel; break;
+        case BiomeType::Mountains: land.topMat = Mat::Stone; break;
+        default: land.topMat = temp < 0.30f ? Mat::Snow : Mat::Soil; break;
     }
+
+    // Layer depths are a weighted average over every biome, so no single biome
+    // "wins" a depth: the sand, snow and basalt layers thin out smoothly across
+    // each border instead of stopping in a column.
+    const float soil0 = 1.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f;
+    const float dirt0 = 12.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 26.0f;
+    const float soilOf[kBiomeCount] = {
+        soil0,                                             // Plains
+        2.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 3.0f, // Hills
+        1.0f,                                              // Mountains
+        soil0,                                             // Canyons
+        30.0f + noise1(x / 45.0f, kWorldSeed + 72u) * 10.0f, // Desert
+        1.0f + noise1(x / 38.0f, kWorldSeed + 61u) * 2.0f, // Tundra
+        1.0f,                                              // Volcanic
+        2.0f};                                             // Scrubland
+    const float dirtOf[kBiomeCount] = {
+        dirt0,                                             // Plains
+        8.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 12.0f, // Hills
+        2.0f,                                              // Mountains
+        dirt0,                                             // Canyons
+        0.0f,                                              // Desert
+        4.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f, // Tundra
+        2.0f,                                              // Volcanic
+        6.0f + noise1(x / 74.0f, kWorldSeed + 62u) * 8.0f}; // Scrubland
+    float soilW = 0.0f, dirtW = 0.0f;
+    for (int i = 0; i < kBiomeCount; ++i) {
+        soilW += biomeW[i] * soilOf[i];
+        dirtW += biomeW[i] * dirtOf[i];
+    }
+    land.soilRows = static_cast<int>(std::lround(soilW));
+    land.dirtRows = static_cast<int>(std::lround(dirtW));
+    land.bodyMat = biomeW[static_cast<int>(BiomeType::Desert)] > 0.5f ? Mat::Sand : land.topMat;
     land.screeMat = land.topMat;
     return land;
 }

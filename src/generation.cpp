@@ -977,6 +977,30 @@ static float scatter(float x, float cell, uint32_t salt, float height, float rea
     return total;
 }
 
+// Glacial valleys: U-shaped troughs cut into the high peaks where moisture
+// is high enough for ice to have carved them. One candidate per 700-column
+// cell; the curve (1 - (d/r)^2)^2 is zero at its rim with zero slope, so the
+// trough has no ridge along its edge.
+static float glacialValleys(float x) {
+    constexpr float kCell = 700.0f;
+    const int c0 = static_cast<int>(std::floor(x / kCell));
+    float total = 0.0f;
+    for (int c = c0 - 1; c <= c0 + 1; ++c) {
+        const uint32_t salt = static_cast<uint32_t>(kWorldSeed) + 1060u;
+        if (hash01(c, 0, static_cast<int>(salt)) > 0.5f) continue;   // half the cells have one
+        const float centre = (static_cast<float>(c) + hash01(c, 1, static_cast<int>(salt))) * kCell;
+        const float radius = 50.0f + 40.0f * hash01(c, 2, static_cast<int>(salt));
+        const float depth = 60.0f + 30.0f * hash01(c, 3, static_cast<int>(salt));
+        const float u = std::max(0.0f, 1.0f - ((x - centre) / radius) * ((x - centre) / radius));
+        total += depth * u * u;
+    }
+    // Only where the land is high and wet: the ice needed to carve them.
+    const float m = mountainHeightAt(static_cast<int>(std::lround(x)));
+    const float wet = std::min(1.0f, std::max(0.0f, (climateMoisture(static_cast<int>(std::lround(x)), 0) - 0.30f) / 0.20f));
+    const float high = std::min(1.0f, std::max(0.0f, (m - 0.02f) / 0.10f));
+    return total * wet * high;
+}
+
 static float biomeOffset(BiomeType biome, float x) {
     switch (biome) {
         case BiomeType::Plains: {
@@ -1001,7 +1025,7 @@ static float biomeOffset(BiomeType biome, float x) {
             // Fault-block ranges, with sharp ridged crests only on the peaks.
             const float m = mountainHeightAt(static_cast<int>(std::lround(x)));
             const float jag = ridged1(x / 160.0f, kWorldSeed + 1020u, 3) * m * 60.0f;
-            return -40.0f - m * 260.0f - jag;
+            return -40.0f - m * 260.0f - jag + glacialValleys(x);
         }
         case BiomeType::Desert: {
             // Dunes whose height varies across the desert: tall megadunes in

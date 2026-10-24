@@ -11,7 +11,18 @@
 
 // The seed of the whole world.
 static uint32_t kWorldSeed = 0x9E3779B9u;
-void setWorldSeed(uint32_t seed) { kWorldSeed = seed ? seed : 0x9E3779B9u; }
+
+// The height cache used by profileAt. Its answers depend on the seed, so it is
+// emptied whenever the seed changes.
+constexpr int kProfileSlots = 65536;   // a power of two, so the index is cheap
+static std::vector<int> profileKeys;
+static std::vector<int> profileValues;
+
+void setWorldSeed(uint32_t seed) {
+    kWorldSeed = seed ? seed : 0x9E3779B9u;
+    profileKeys.assign(kProfileSlots, INT_MIN);
+    profileValues.assign(kProfileSlots, 0);
+}
 uint32_t worldSeed() { return kWorldSeed; }
 
 static float volcanicWeightAt(float x);
@@ -319,8 +330,13 @@ struct Land {
 // colder. The seed shifts the whole map, so every world has its own climate.
 constexpr int kSeaRow = 330;   // the row of sea level
 // How large the biomes are: every climate and zone feature is this many times
-// wider than before.
-constexpr float kBiomeScale = 1.8f;
+// the size it was first built at.
+constexpr float kBiomeScale = 2.8f;
+// How much wider the land features are than before: the height curve is read
+// at worldX / kWorldScale.
+constexpr float kWorldScale = 1.6f;
+// How much taller the land rises and sinks above and below sea level.
+constexpr float kHeightScale = 1.5f;
 
 static float climateTemperature(int worldX, int worldY) {
     const float fx = static_cast<float>(worldX), fy = static_cast<float>(worldY);
@@ -1129,10 +1145,13 @@ static float biomeOffset(BiomeType biome, float x) {
 }
 
 static float profileHeight(int worldX) {
+    // Every land feature is read at this column divided by kWorldScale, so the
+    // whole land is stretched sideways: swells, ranges, dunes and plate seams
+    // all grow together. The heights are not scaled.
+    const float x0 = static_cast<float>(worldX) / kWorldScale;
     // Domain warp: every height input is read at a point nudged by a slow
     // noise offset, so ranges and valleys meander and pinch instead of running
     // in straight, parallel bands.
-    const float x0 = static_cast<float>(worldX);
     const float x = x0 + (fbm1(x0 / 400.0f, kWorldSeed + 1900u, 2) - 0.5f) * 2.0f * 200.0f;
 
     // The swell is shared by every biome, so the continents still roll.
@@ -1156,8 +1175,16 @@ static float profileHeight(int worldX) {
     // level floors. There is no water in them.
     const float cont = fbm1(x0 / 12000.0f, kWorldSeed + 1100u, 3) - 0.5f;
     const float basin = std::min(1.0f, std::max(0.0f, (-cont - 0.06f) / 0.12f));
-    return 330.0f - swell * 190.0f + offset * (1.0f - 0.75f * basin) + eroded
-         - cont * 180.0f + basin * 35.0f;
+    const float h = 330.0f - swell * 190.0f + offset * (1.0f - 0.75f * basin) + eroded
+                  - cont * 180.0f + basin * 35.0f;
+    float row = static_cast<float>(kSeaRow) + (h - static_cast<float>(kSeaRow)) * kHeightScale;
+    // The top of the world is row 0. Peaks that climb above kCeilingRow bend
+    // over into a rounded ceiling that approaches row 20 but never reaches it,
+    // so the land always stays inside the world.
+    constexpr float kCeilingRow = 50.0f;
+    constexpr float kCeilingSoft = 30.0f;
+    if (row < kCeilingRow) row = kCeilingRow - kCeilingSoft * (1.0f - std::exp((row - kCeilingRow) / kCeilingSoft));
+    return row;
 }
 
 // The height of the ground at a column, remembered.
@@ -1167,17 +1194,11 @@ static float profileHeight(int worldX) {
 // The answers are kept in a small cache of a fixed size, so a long walk
 // through the world cannot fill the machine's memory.
 int profileAt(int worldX) {
-    static constexpr int kSlots = 65536;   // a power of two, so the index is cheap
-    static std::vector<int> keys;
-    static std::vector<int> values;
-    if (keys.empty()) {
-        keys.assign(kSlots, INT_MIN);
-        values.assign(kSlots, 0);
-    }
+    if (profileKeys.empty()) setWorldSeed(kWorldSeed);
 
     const size_t slot = static_cast<size_t>(static_cast<uint32_t>(worldX) * 2654435761u) &
-                        static_cast<size_t>(kSlots - 1);
-    if (keys[slot] == worldX) return values[slot];
+                        static_cast<size_t>(kProfileSlots - 1);
+    if (profileKeys[slot] == worldX) return profileValues[slot];
 
     // Terracing: in arid provinces (hot and dry) the land is stepped into
     // benches and mesas. The height is blended toward its stepped value, so
@@ -1193,8 +1214,8 @@ int profileAt(int worldX) {
     constexpr float kBench = 14.0f;   // rows per step
     const float stepped = smoothStair(raw, kBench);
     const int row = static_cast<int>(std::lround(raw + (stepped - raw) * arid));
-    keys[slot] = worldX;
-    values[slot] = row;
+    profileKeys[slot] = worldX;
+    profileValues[slot] = row;
     return row;
 }
 

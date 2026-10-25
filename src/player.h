@@ -10,8 +10,8 @@
 // separate, so it can be tested on its own without a window.
 class Player {
 public:
-    static constexpr int WIDTH = 6;
-    static constexpr int HEIGHT = 10;
+    static constexpr int WIDTH = 1;
+    static constexpr int HEIGHT = 2;
 
     // `x` is the left edge, `y` the top, in world cells.
     Player(float x, float y);

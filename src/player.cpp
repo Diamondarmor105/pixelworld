@@ -31,7 +31,10 @@ constexpr int MAX_STEP_UP = 2;
 // Calibrated so a small drift of light snow (a few columns deep) is ploughed
 // through, while the same heap of heavy gravel stops you almost at once. Air
 // weighs nothing and nothing solid is ever loose, so neither is ever pushed.
-constexpr int PUSH_FORCE = 1200;
+// It scales with the player's height: each cell of height the player fills
+// carries 120 of it, so the strength is the same however tall the player is.
+constexpr int PUSH_FORCE_PER_CELL = 120;
+constexpr int PUSH_FORCE = PUSH_FORCE_PER_CELL * Player::HEIGHT;
 
 // What the player cannot walk through. Air and fire are passable, and so are
 // leaves - you push through foliage rather than being stopped by it. Liquids
@@ -212,9 +215,6 @@ void Player::draw(float offsetX, float offsetY, int scale) const {
     const float px = offsetX + std::floor(x_) * scale;
     const float py = offsetY + std::floor(y_) * scale;
 
-    // A head and a body, so the block reads as a little person.
     DrawRectangle(static_cast<int>(px), static_cast<int>(py),
-                  WIDTH * scale, 3 * scale, Color{248, 210, 170, 255});
-    DrawRectangle(static_cast<int>(px), static_cast<int>(py) + 3 * scale,
-                  WIDTH * scale, (HEIGHT - 3) * scale, Color{226, 88, 74, 255});
+                  WIDTH * scale, HEIGHT * scale, Color{230, 41, 55, 255});
 }

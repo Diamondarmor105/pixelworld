@@ -1516,7 +1516,9 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     };
     std::vector<Footprint> footprints;
     for (int i = 0; i < 6; ++i) {
-        const int kind = static_cast<int>(hash01(index, i, 121) * structureFirstDesertKind()) % structureFirstDesertKind();
+        // Only vegetation: tree, giant tree, bush, tuft (kinds 2-5).
+        static const int vegKinds[] = {2, 3, 4, 5};
+        const int kind = vegKinds[static_cast<int>(hash01(index, i, 121) * 4.0f) % 4];
         const int variant = static_cast<int>(hash01(index, i, 122) * 8.0f);
         const StructurePattern& pattern = structurePattern(kind, variant);
         const int patternWidth = structurePatternWidth(pattern);
@@ -1653,6 +1655,58 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             placements->push_back(placement);
         }
     }
+    // Surface pools: water on the plains, lava in the volcanic country.
+    // Each chunk gets at most one of each, placed where the biome is strong.
+    for (int pi = 0; pi < 2; ++pi) {
+        const int lx = 20 + static_cast<int>(hash01(index, pi, 201) * (Chunk::WIDTH - 40.0f));
+        const int wx = baseX + lx;
+        float bw[kBiomeCount];
+        biomeWeights(wx, kSeaRow, bw);
+        const Mat ground = landAt(wx).topMat;
+
+        // Water pool on plains.
+        if (pi == 0 && bw[static_cast<int>(BiomeType::Plains)] > 0.5f && ground == Mat::Grass) {
+            const int poolHalf = 8 + static_cast<int>(hash01(index, pi, 202) * 8.0f);
+            const int poolDepth = 4 + static_cast<int>(hash01(index, pi, 203) * 4.0f);
+            const int centre = wx;
+            int rimW = profileAt(centre - poolHalf);
+            rimW = std::min(rimW, profileAt(centre + poolHalf));
+            if (profileAt(centre) - rimW >= 2) {
+                for (int dx = -poolHalf; dx <= poolHalf; ++dx) {
+                    const int x = centre + dx;
+                    const int localX = x - baseX;
+                    if (localX < 0 || localX >= Chunk::WIDTH) continue;
+                    const int bed = rimW + poolDepth;
+                    for (int y = rimW; y < bed && y < height - 3; ++y) {
+                        const size_t cell = chunk.index(localX, y);
+                        if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;
+                        chunk.cells[cell] = static_cast<uint8_t>(Mat::Water);
+                        chunk.mass[cell] = 1.0f;
+                    }
+                }
+            }
+        }
+
+        // Lava pool on volcanic ground.
+        if (pi == 1 && bw[static_cast<int>(BiomeType::Volcanic)] > 0.5f && ground == Mat::Basalt) {
+            const int poolHalf = 6 + static_cast<int>(hash01(index, pi, 204) * 6.0f);
+            const int poolDepth = 3 + static_cast<int>(hash01(index, pi, 205) * 3.0f);
+            const int centre = wx;
+            for (int dy = 0; dy <= poolDepth + 1; ++dy) {
+                for (int dx = -poolHalf - 1; dx <= poolHalf + 1; ++dx) {
+                    const int x = centre + dx;
+                    const int y = profileAt(centre) + dy;
+                    const int localX = x - baseX;
+                    if (localX < 0 || localX >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
+                    const bool wall = std::abs(dx) == poolHalf + 1 || dy == poolDepth + 1;
+                    const size_t cell = chunk.index(localX, y);
+                    chunk.cells[cell] = static_cast<uint8_t>(wall ? Mat::Stone : Mat::Lava);
+                    chunk.mass[cell] = wall ? 0.0f : 1.0f;
+                }
+            }
+        }
+    }
+
 }
 
 void generateChunksAround(World& world, int worldX, int radius) {

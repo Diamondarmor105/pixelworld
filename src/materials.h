@@ -38,6 +38,7 @@ enum class Mat : uint8_t {
     Wood,
     Bark,
     Foliage,
+    PineNeedles,   // dark green needles of the pines
     Mycelium,
     FungalCap,
 

@@ -336,20 +336,20 @@ const char* const kDeadBushC[] = {
 // -- Pines -----------------------------------------------------------------
 
 const char* const kPineA[] = {
-    "......L......",
-    ".....LLL.....",
-    "....LLLLL....",
-    "...LLLLLLL...",
-    "..LLLLLLLLL..",
-    ".LLLLLLLLLLL.",
-    "LLLLLLLLLLLLL",
-    "LLLLLLLLLLLLL",
-    ".LLLLLLLLLLL.",
-    "..LLLLLLLLL..",
-    "...LLLLLLL...",
-    "....LLLLL....",
-    ".....LLL.....",
-    "......L......",
+    "......I......",
+    ".....III.....",
+    "....IIIII....",
+    "...IIIIIII...",
+    "..IIIIIIIII..",
+    ".IIIIIIIIIII.",
+    "IIIIIIIIIIIII",
+    "IIIIIIIIIIIII",
+    ".IIIIIIIIIII.",
+    "..IIIIIIIII..",
+    "...IIIIIII...",
+    "....IIIII....",
+    ".....III.....",
+    "......I......",
     "......T......",
     "......T......",
     "......T......",
@@ -359,18 +359,18 @@ const char* const kPineA[] = {
 };
 
 const char* const kPineB[] = {
-    ".....L.....",
-    "....LLL....",
-    "...LLLLL...",
-    "..LLLLLLL..",
-    ".LLLLLLLLL.",
-    "LLLLLLLLLLL",
-    "LLLLLLLLLLL",
-    ".LLLLLLLLL.",
-    "..LLLLLLL..",
-    "...LLLLL...",
-    "....LLL....",
-    ".....L.....",
+    ".....I.....",
+    "....III....",
+    "...IIIII...",
+    "..IIIIIII..",
+    ".IIIIIIIII.",
+    "IIIIIIIIIII",
+    "IIIIIIIIIII",
+    ".IIIIIIIII.",
+    "..IIIIIII..",
+    "...IIIII...",
+    "....III....",
+    ".....I.....",
     ".....T.....",
     ".....T.....",
     ".....T.....",
@@ -379,16 +379,16 @@ const char* const kPineB[] = {
 };
 
 const char* const kPineC[] = {
-    "....L....",
-    "...LLL...",
-    "..LLLLL..",
-    ".LLLLLLL.",
-    "LLLLLLLLL",
-    "LLLLLLLLL",
-    ".LLLLLLL.",
-    "..LLLLL..",
-    "...LLL...",
-    "....L....",
+    "....I....",
+    "...III...",
+    "..IIIII..",
+    ".IIIIIII.",
+    "IIIIIIIII",
+    "IIIIIIIII",
+    ".IIIIIII.",
+    "..IIIII..",
+    "...III...",
+    "....I....",
     "....T....",
     "....T....",
     "....T....",
@@ -398,31 +398,31 @@ const char* const kPineC[] = {
 // -- Tundra shrubs ---------------------------------------------------------
 
 const char* const kTundraShrubA[] = {
-    "..LLLL..",
-    ".LLLLLL.",
-    "LLLLLLLL",
-    "LLLLLLLL",
-    ".LLLLLL.",
-    "..L..L..",
+    "..IIII..",
+    ".IIIIII.",
+    "IIIIIIII",
+    "IIIIIIII",
+    ".IIIIII.",
+    "..I..I..",
 };
 
 const char* const kTundraShrubB[] = {
-    "...LL...",
-    "..LLLL..",
-    ".LLLLLL.",
-    "LLLLLLLL",
-    "LLLLLLLL",
-    ".LLLLLL.",
-    "..LL.LL.",
+    "...II...",
+    "..IIII..",
+    ".IIIIII.",
+    "IIIIIIII",
+    "IIIIIIII",
+    ".IIIIII.",
+    "..II.II.",
 };
 
 const char* const kTundraShrubC[] = {
-    ".LL.LL.",
-    "LLLLLLL",
-    "LLLLLLL",
-    "LLLLLLL",
-    ".LLLLL.",
-    "..L.L..",
+    ".II.II.",
+    "IIIIIII",
+    "IIIIIII",
+    "IIIIIII",
+    ".IIIII.",
+    "..I.I..",
 };
 
 // -- Grass tufts -----------------------------------------------------------
@@ -587,6 +587,7 @@ Mat structureMaterial(char c) {
         case 'T': return Mat::Wood;
         case 'B': return Mat::Bark;
         case 'L': return Mat::Foliage;
+        case 'I': return Mat::PineNeedles;
         case 'S': return Mat::Stone;
         case 'N': return Mat::Limestone;
         case 'X': return Mat::Basalt;

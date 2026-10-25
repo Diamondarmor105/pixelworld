@@ -35,6 +35,7 @@ static const MaterialInfo kMaterials[] = {
     /* Wood         */ {"Wood",         { 146, 102,  64, 255 }, 200, false, false,   0,   0, false, true,  60,  12, Mat::Ash,   false, Mat::Air,   false,  60, true},
     /* Bark         */ {"Bark",         { 110,  76,  48, 255 }, 210, false, false,   0,   0, false, true,  60,  10, Mat::Ash,   false, Mat::Air,   false,  65, true},
     /* Foliage      */ {"Foliage",      {  96, 176,  88, 255 },  80, false, false,   0,   0, false, true,  15,  40, Mat::Ash,   false, Mat::Air,   false,  15, true},
+    /* PineNeedles  */ {"PineNeedles",  {  40, 110,  50, 255 },  80, false, false,   0,   0, false, true,  15,  40, Mat::Ash,   false, Mat::Air,   false,  15, true},
     /* Mycelium     */ {"Mycelium",     { 170, 150, 180, 255 }, 150, false, false,   0,   0, false, true,  20,  30, Mat::Ash,   false, Mat::Air,   false,  20, true},
     /* FungalCap    */ {"Fungal Cap",   { 206, 110, 120, 255 }, 120, false, false,   0,   0, false, true,  20,  30, Mat::Ash,   false, Mat::Air,   false,  20, true},
     /* Water        */ {"Water",        {  70, 140, 230, 255 }, 100, false, true,    0,   0, false, false,  0,   0, Mat::Air,   false, Mat::Air,   false,   5, false},

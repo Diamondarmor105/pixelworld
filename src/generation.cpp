@@ -1004,7 +1004,7 @@ constexpr float kBiomeReach = 0.12f;   // how far a biome's influence spreads on
 // biome always applies and the blend has no gaps, however the zone map varies.
 // The weights sum to 1.
 static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
-    const float zone = fbm1(static_cast<float>(worldX) / (4000.0f * kBiomeScale), kWorldSeed + 500u, 2);
+    const float zone = fbm1(static_cast<float>(worldX) / (20000.0f * kBiomeScale), kWorldSeed + 500u, 2);
     float sum = 0.0f;
     for (int i = 0; i < kZoneBiomes; ++i) {
         const float d = (zone - kBiomeCentre[i]) / kBiomeReach;
@@ -1014,15 +1014,15 @@ static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
     for (int i = 0; i < kZoneBiomes; ++i) out[i] /= sum;
 
     const float hot = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.50f) / 0.28f));
-    const float desert = hot * hot * (3.0f - 2.0f * hot);
+    const float desert = hot * hot * (3.0f - 2.0f * hot) * 0.9f;
     const float cold = std::min(1.0f, std::max(0.0f, (0.27f - climateTemperature(worldX, worldY)) / 0.10f));
     const float tundra = cold * cold * (3.0f - 2.0f * cold);
     // Volcanic country: patches of hot ground where a 2D noise runs high.
-    const float volcanicNoise = fbm2(static_cast<float>(worldX) / (900.0f * kBiomeScale), static_cast<float>(worldY) / (700.0f * kBiomeScale), kWorldSeed + 950u, 2);
+    const float volcanicNoise = fbm2(static_cast<float>(worldX) / (4500.0f * kBiomeScale), static_cast<float>(worldY) / (3500.0f * kBiomeScale), kWorldSeed + 950u, 2);
     // Volcanic ground sits in the warm band just below the desert, so the two
     // can win in different places instead of the desert always taking over.
     const float warm = std::min(1.0f, std::max(0.0f, (climateTemperature(worldX, worldY) - 0.42f) / 0.15f));
-    const float volcanic = warm * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.45f) / 0.15f)) * (1.0f - desert);
+    const float volcanic = warm * std::min(1.0f, std::max(0.0f, (volcanicNoise - 0.45f) / 0.15f)) * (1.0f - desert) * 0.9f;
     // Never negative: where the special biomes together cover everything, the
     // zone biomes simply step aside.
     const float zoneShare = std::max(0.0f, 1.0f - desert - tundra - volcanic);
@@ -1034,7 +1034,7 @@ static void biomeWeights(int worldX, int worldY, float out[kBiomeCount]) {
     // are equally strong and fades out in the core of either. Weights are then
     // renormalized so they still sum to 1.
     // A ring around the desert edge: it peaks where desert is half strong.
-    out[kZoneBiomes + 3] = 4.0f * out[kZoneBiomes] * (1.0f - out[kZoneBiomes]);
+    out[kZoneBiomes + 3] = 0.5f * out[kZoneBiomes] * (1.0f - out[kZoneBiomes]);
     float total = 0.0f;
     for (int i = 0; i < kBiomeCount; ++i) total += out[i];
     if (total <= 1e-6f) { out[static_cast<int>(BiomeType::Plains)] = 1.0f; return; }

@@ -1516,7 +1516,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     };
     std::vector<Footprint> footprints;
     for (int i = 0; i < 6; ++i) {
-        const int kind = static_cast<int>(hash01(index, i, 121) * structureKindCount()) % structureKindCount();
+        const int kind = static_cast<int>(hash01(index, i, 121) * structureFirstDesertKind()) % structureFirstDesertKind();
         const int variant = static_cast<int>(hash01(index, i, 122) * 8.0f);
         const StructurePattern& pattern = structurePattern(kind, variant);
         const int patternWidth = structurePatternWidth(pattern);
@@ -1542,6 +1542,51 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         if (clashes) continue;
 
         // Stand on the lowest ground under the footprint, so nothing hangs.
+        int base = 0;
+        for (int dx = 0; dx < patternWidth; ++dx) base = std::max(base, groundRow(baseX + lx + dx));
+        base = std::min(base, height - patternHeight - 1);
+        if (base < patternHeight) continue;
+
+        drawPattern(chunk, pattern, lx, base - 1);
+        footprints.push_back({lx, lx + patternWidth - 1});
+
+        if (placements) {
+            StructurePlacement placement;
+            placement.x = baseX + lx;
+            placement.y = base - 1;
+            placement.width = patternWidth;
+            placement.height = patternHeight;
+            placement.kind = kind;
+            placement.variant = variant;
+            placements->push_back(placement);
+        }
+    }
+
+    // Desert: cacti and dead bushes stand on the sand where the desert is strong.
+    const int firstDesert = structureFirstDesertKind();
+    const int desertKinds = structureKindCount() - firstDesert;
+    for (int i = 0; i < 4; ++i) {
+        const int kind = firstDesert + static_cast<int>(hash01(index, i, 131) * desertKinds) % desertKinds;
+        const int variant = static_cast<int>(hash01(index, i, 132) * 8.0f);
+        const StructurePattern& pattern = structurePattern(kind, variant);
+        const int patternWidth = structurePatternWidth(pattern);
+        const int patternHeight = pattern.rowCount;
+        if (patternWidth <= 0 || patternWidth >= Chunk::WIDTH - 12) continue;
+
+        const int room = Chunk::WIDTH - 12 - patternWidth;
+        const int lx = 6 + static_cast<int>(hash01(index, i, 133) * static_cast<float>(room));
+        const int wx = baseX + lx;
+
+        float bw[kBiomeCount];
+        biomeWeights(wx, kSeaRow, bw);
+        if (bw[static_cast<int>(BiomeType::Desert)] < 0.5f || landAt(wx).topMat != Mat::Sand) continue;
+
+        bool clashes = false;
+        for (const Footprint& f : footprints) {
+            if (lx + patternWidth - 1 >= f.left && lx <= f.right) clashes = true;
+        }
+        if (clashes) continue;
+
         int base = 0;
         for (int dx = 0; dx < patternWidth; ++dx) base = std::max(base, groundRow(baseX + lx + dx));
         base = std::min(base, height - patternHeight - 1);

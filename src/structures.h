@@ -31,6 +31,10 @@ struct StructureSet {
 // How many kinds of structure there are.
 int structureKindCount();
 
+// The first kind that only grows in the desert (cacti, dead bushes). Every kind
+// from here to the end of the list is a desert kind.
+int structureFirstDesertKind();
+
 // The patterns for one kind.
 const StructureSet& structureKind(int index);
 

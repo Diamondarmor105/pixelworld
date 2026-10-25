@@ -283,6 +283,56 @@ const char* const kBushC[] = {
     "..L....L..",
 };
 
+// -- Cacti -----------------------------------------------------------------
+
+const char* const kCactusA[] = {
+    "...L...",
+    "...L.L.",
+    ".L.L.L.",
+    ".L.LLL.",
+    ".LLL...",
+    "...L...",
+    "...L...",
+};
+
+const char* const kCactusB[] = {
+    "..L..",
+    "..L.L",
+    "..LLL",
+    "..L..",
+    "..L..",
+    "..L..",
+};
+
+const char* const kCactusC[] = {
+    ".L.",
+    "LLL",
+    ".L.",
+    ".L.",
+    ".L.",
+};
+
+// -- Dead bushes -----------------------------------------------------------
+
+const char* const kDeadBushA[] = {
+    "B..B..B",
+    ".B.BB.B",
+    "..BBBB.",
+    "...TT..",
+};
+
+const char* const kDeadBushB[] = {
+    "B.B.B",
+    ".BBB.",
+    "..T..",
+};
+
+const char* const kDeadBushC[] = {
+    "BB..BB",
+    ".B..B.",
+    "..TT..",
+};
+
 // -- Grass tufts -----------------------------------------------------------
 
 const char* const kTuftA[] = {
@@ -381,12 +431,21 @@ const StructureSet kKinds[] = {
     {"tuft",        {{kTuftA, 4}, {kTuftB, 4}, {kTuftC, 4}}, 3},
     {"buried ruin", {{kBuriedRuinA, 6}, {kBuriedRuinB, 5}, {kBuriedRuinC, 5}}, 3},
     {"bones",       {{kBonesA, 7}, {kBonesB, 8}, {kBonesC, 8}}, 3},
+    // Desert kinds: these only stand on the sand.
+    {"cactus",      {{kCactusA, 7}, {kCactusB, 6}, {kCactusC, 5}}, 3},
+    {"dead bush",   {{kDeadBushA, 4}, {kDeadBushB, 3}, {kDeadBushC, 3}}, 3},
 };
+
+constexpr int kFirstDesertKind = 8;
 
 }  // namespace
 
 int structureKindCount() {
     return static_cast<int>(sizeof(kKinds) / sizeof(kKinds[0]));
+}
+
+int structureFirstDesertKind() {
+    return kFirstDesertKind;
 }
 
 const StructureSet& structureKind(int index) {

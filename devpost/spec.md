@@ -229,6 +229,6 @@ Nothing external at runtime. Nothing to sign up for, no keys, no rate limits, no
 
 **Open issues:**
 
-- **Repository boundary.** The enclosing git repository is the whole Desktop folder, not this project — publishing that as the hackathon repository would leak unrelated files. Before `6-ship`, this folder should become its own repository (or the app should move into one). Flagged for the build.
+- **Repository.** Published as its own public repository at https://github.com/Diamondarmor105/pixelworld (created 2026-10-25). The folder became its own repository; `devpost/learner-profile.md` is gitignored and stays local.
 - **The exact raylib 6.2 names** for creating and updating an image texture should be confirmed by compiling the hello-window step first; the reference used above is from raylib's documentation, not from a build on this machine.
 - **Player damage from falling material** (being buried by sand) is unspecified in the PRD. Working assumption: it does not damage the player, only lava, fire, explosions and acid do. Trivial to change.

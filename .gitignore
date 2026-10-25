@@ -14,3 +14,12 @@
 /pixelworld-debug
 /selftest.png
 /smoke.png
+
+# Course helper folders and skill files
+/.agents/
+/.claude/
+/agent/
+/skills-lock.json
+
+# Debug build artifacts
+/pixelworld-debug.dSYM/

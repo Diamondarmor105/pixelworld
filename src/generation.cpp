@@ -1656,63 +1656,99 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         }
     }
     // Surface pools: water on the plains, lava in the volcanic country.
-    // Each chunk gets at most one of each, placed where the biome is strong.
-    for (int pi = 0; pi < 2; ++pi) {
-        const int lx = 20 + static_cast<int>(hash01(index, pi, 201) * (Chunk::WIDTH - 40.0f));
-        const int wx = baseX + lx;
-        float bw[kBiomeCount];
-        biomeWeights(wx, kSeaRow, bw);
-        const Mat ground = landAt(wx).topMat;
+    // Placed in flat areas of the terrain, carved into the ground with an
+    // organic (non-rectangular) outline.
 
-        // Water pool on plains: a bowl-shaped depression.
-        if (pi == 0 && bw[static_cast<int>(BiomeType::Plains)] > 0.5f && ground == Mat::Grass) {
-            const int poolHalf = 8 + static_cast<int>(hash01(index, pi, 202) * 8.0f);
-            const int poolDepth = 4 + static_cast<int>(hash01(index, pi, 203) * 4.0f);
-            const int centre = wx;
-            int rimW = profileAt(centre - poolHalf);
-            rimW = std::min(rimW, profileAt(centre + poolHalf));
-            rimW = std::min(rimW, profileAt(centre));
-            if (profileAt(centre) - rimW >= 2) {
-                for (int dx = -poolHalf; dx <= poolHalf; ++dx) {
-                    const int x = centre + dx;
-                    const int localX = x - baseX;
-                    if (localX < 0 || localX >= Chunk::WIDTH) continue;
-                    // Bowl shape: depth is greatest at centre, zero at the rim.
-                    const float t = static_cast<float>(std::abs(dx)) / static_cast<float>(poolHalf);
-                    const int localDepth = static_cast<int>(std::lround(poolDepth * (1.0f - t * t)));
-                    if (localDepth <= 0) continue;
-                    const int bed = rimW + localDepth;
-                    for (int y = rimW; y < bed && y < height - 3; ++y) {
-                        const size_t cell = chunk.index(localX, y);
-                        if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;
-                        chunk.cells[cell] = static_cast<uint8_t>(Mat::Water);
-                        chunk.mass[cell] = 1.0f;
-                    }
+    // Find flat spots: columns where the terrain barely changes over a window.
+    // A pool needs a flat-ish area at least poolSize wide.
+    auto isFlat = [&](int cx, int halfW) -> bool {
+        const int g0 = profileAt(cx);
+        for (int d = -halfW; d <= halfW; ++d) {
+            if (std::abs(profileAt(cx + d) - g0) > 2) return false;
+        }
+        return true;
+    };
+
+    // Water pool on plains.
+    {
+        // Try a few candidate positions.
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const int lx = 15 + static_cast<int>(hash01(index, attempt, 301) * (Chunk::WIDTH - 30.0f));
+            const int wx = baseX + lx;
+            float bw[kBiomeCount];
+            biomeWeights(wx, kSeaRow, bw);
+            const Mat ground = landAt(wx).topMat;
+            if (bw[static_cast<int>(BiomeType::Plains)] < 0.4f || ground != Mat::Grass) continue;
+
+            const int poolHalf = 6 + static_cast<int>(hash01(index, attempt, 302) * 6.0f);
+            if (!isFlat(wx, poolHalf)) continue;
+
+            // Carve an organic pool shape: an ellipse with noise on the outline.
+            const int rimRow = profileAt(wx);
+            const int poolDepth = 3 + static_cast<int>(hash01(index, attempt, 303) * 3.0f);
+            // Organic outline: for each column, compute how deep the pool goes.
+            for (int dx = -poolHalf - 2; dx <= poolHalf + 2; ++dx) {
+                const int x = wx + dx;
+                const int localX = x - baseX;
+                if (localX < 0 || localX >= Chunk::WIDTH) continue;
+                // Elliptical base depth.
+                const float t = static_cast<float>(dx) / static_cast<float>(poolHalf);
+                if (std::abs(t) > 1.0f) continue;
+                const float ellipse = 1.0f - t * t;
+                // Noise on the outline so it is not a perfect ellipse.
+                const float n = noise1(static_cast<float>(dx) * 0.4f + static_cast<float>(index) * 3.0f, kWorldSeed + 310u);
+                const float depthScale = ellipse * (0.8f + 0.4f * n);
+                const int localDepth = static_cast<int>(std::lround(poolDepth * depthScale));
+                if (localDepth <= 0) continue;
+                const int bed = rimRow + localDepth;
+                for (int y = rimRow; y < bed && y < height - 3; ++y) {
+                    const size_t cell = chunk.index(localX, y);
+                    if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;
+                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Water);
+                    chunk.mass[cell] = 1.0f;
                 }
             }
+            break; // one pool per chunk
         }
+    }
 
-        // Lava pool on volcanic ground: an irregular stone cup.
-        if (pi == 1 && bw[static_cast<int>(BiomeType::Volcanic)] > 0.5f && ground == Mat::Basalt) {
-            const int poolHalf = 6 + static_cast<int>(hash01(index, pi, 204) * 6.0f);
-            const int poolDepth = 3 + static_cast<int>(hash01(index, pi, 205) * 3.0f);
+    // Lava pool on volcanic ground: an irregular stone cup in a flat area.
+    {
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const int lx = 15 + static_cast<int>(hash01(index, attempt, 311) * (Chunk::WIDTH - 30.0f));
+            const int wx = baseX + lx;
+            float bw[kBiomeCount];
+            biomeWeights(wx, kSeaRow, bw);
+            const Mat ground = landAt(wx).topMat;
+            if (bw[static_cast<int>(BiomeType::Volcanic)] < 0.4f || ground != Mat::Basalt) continue;
+
+            const int poolHalf = 5 + static_cast<int>(hash01(index, attempt, 312) * 5.0f);
+            if (!isFlat(wx, poolHalf)) continue;
+
+            const int poolDepth = 3 + static_cast<int>(hash01(index, attempt, 313) * 3.0f);
             const int centre = wx;
+            const int rimRow = profileAt(centre);
             for (int dy = 0; dy <= poolDepth + 1; ++dy) {
-                for (int dx = -poolHalf - 1; dx <= poolHalf + 1; ++dx) {
+                for (int dx = -poolHalf - 2; dx <= poolHalf + 2; ++dx) {
                     const int x = centre + dx;
                     const int localX = x - baseX;
                     if (localX < 0 || localX >= Chunk::WIDTH) continue;
-                    // Irregular wall: wobbles with noise so it is not a box.
-                    const float wallNoise = noise1(static_cast<float>(dx) * 0.3f + static_cast<float>(index) * 7.0f, kWorldSeed + 210u);
-                    const int wallH = poolDepth + 1 + static_cast<int>(wallNoise * 2.0f);
-                    const int y = profileAt(centre) + dy;
+                    // Organic outline.
+                    const float t = static_cast<float>(dx) / static_cast<float>(poolHalf);
+                    if (std::abs(t) > 1.2f) continue;
+                    const float ellipse = 1.0f - t * t * 0.8f;
+                    if (ellipse <= 0.0f) continue;
+                    const float n = noise1(static_cast<float>(dx) * 0.3f + static_cast<float>(index) * 7.0f, kWorldSeed + 320u);
+                    const int wallH = poolDepth + 1 + static_cast<int>(n * 2.0f);
+                    const int y = rimRow + dy;
                     if (y < 0 || y >= height - 3) continue;
-                    const bool wall = std::abs(dx) >= poolHalf + 1 - static_cast<int>(wallNoise * 2.0f) || dy >= wallH;
+                    const bool wall = std::abs(dx) >= poolHalf + 1 - static_cast<int>(n * 2.0f) || dy >= wallH;
                     const size_t cell = chunk.index(localX, y);
                     chunk.cells[cell] = static_cast<uint8_t>(wall ? Mat::Stone : Mat::Lava);
                     chunk.mass[cell] = wall ? 0.0f : 1.0f;
                 }
             }
+            break;
         }
     }
 

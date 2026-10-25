@@ -333,6 +333,98 @@ const char* const kDeadBushC[] = {
     "..TT..",
 };
 
+// -- Pines -----------------------------------------------------------------
+
+const char* const kPineA[] = {
+    "......L......",
+    ".....LLL.....",
+    "....LLLLL....",
+    "...LLLLLLL...",
+    "..LLLLLLLLL..",
+    ".LLLLLLLLLLL.",
+    "LLLLLLLLLLLLL",
+    "LLLLLLLLLLLLL",
+    ".LLLLLLLLLLL.",
+    "..LLLLLLLLL..",
+    "...LLLLLLL...",
+    "....LLLLL....",
+    ".....LLL.....",
+    "......L......",
+    "......T......",
+    "......T......",
+    "......T......",
+    "......T......",
+    "......T......",
+    "......T......",
+};
+
+const char* const kPineB[] = {
+    ".....L.....",
+    "....LLL....",
+    "...LLLLL...",
+    "..LLLLLLL..",
+    ".LLLLLLLLL.",
+    "LLLLLLLLLLL",
+    "LLLLLLLLLLL",
+    ".LLLLLLLLL.",
+    "..LLLLLLL..",
+    "...LLLLL...",
+    "....LLL....",
+    ".....L.....",
+    ".....T.....",
+    ".....T.....",
+    ".....T.....",
+    ".....T.....",
+    ".....T.....",
+};
+
+const char* const kPineC[] = {
+    "....L....",
+    "...LLL...",
+    "..LLLLL..",
+    ".LLLLLLL.",
+    "LLLLLLLLL",
+    "LLLLLLLLL",
+    ".LLLLLLL.",
+    "..LLLLL..",
+    "...LLL...",
+    "....L....",
+    "....T....",
+    "....T....",
+    "....T....",
+    "....T....",
+};
+
+// -- Tundra shrubs ---------------------------------------------------------
+
+const char* const kTundraShrubA[] = {
+    "..LLLL..",
+    ".LLLLLL.",
+    "LLLLLLLL",
+    "LLLLLLLL",
+    ".LLLLLL.",
+    "..L..L..",
+};
+
+const char* const kTundraShrubB[] = {
+    "...LL...",
+    "..LLLL..",
+    ".LLLLLL.",
+    "LLLLLLLL",
+    "LLLLLLLL",
+    ".LLLLLL.",
+    "..LL.LL.",
+};
+
+const char* const kTundraShrubC[] = {
+    ".LL.LL.",
+    "LLLLLLL",
+    "LLLLLLL",
+    "LLLLLLL",
+    ".LLLLL.",
+    "..L.L..",
+};
+
 // -- Grass tufts -----------------------------------------------------------
 
 const char* const kTuftA[] = {
@@ -431,12 +523,15 @@ const StructureSet kKinds[] = {
     {"tuft",        {{kTuftA, 4}, {kTuftB, 4}, {kTuftC, 4}}, 3},
     {"buried ruin", {{kBuriedRuinA, 6}, {kBuriedRuinB, 5}, {kBuriedRuinC, 5}}, 3},
     {"bones",       {{kBonesA, 7}, {kBonesB, 8}, {kBonesC, 8}}, 3},
+    // Tundra kinds: pines and shrubs on the frozen ground.
+    {"pine",        {{kPineA, 20}, {kPineB, 17}, {kPineC, 14}}, 3},
+    {"tundra shrub",{{kTundraShrubA, 8}, {kTundraShrubB, 8}, {kTundraShrubC, 7}}, 3},
     // Desert kinds: these only stand on the sand.
     {"cactus",      {{kCactusA, 7}, {kCactusB, 6}, {kCactusC, 5}}, 3},
     {"dead bush",   {{kDeadBushA, 4}, {kDeadBushB, 3}, {kDeadBushC, 3}}, 3},
 };
 
-constexpr int kFirstDesertKind = 8;
+constexpr int kFirstDesertKind = 10;
 
 }  // namespace
 
@@ -446,6 +541,12 @@ int structureKindCount() {
 
 int structureFirstDesertKind() {
     return kFirstDesertKind;
+}
+
+constexpr int kFirstTundraKind = 8;
+
+int structureFirstTundraKind() {
+    return kFirstTundraKind;
 }
 
 const StructureSet& structureKind(int index) {

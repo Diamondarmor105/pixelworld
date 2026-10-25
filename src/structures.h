@@ -35,6 +35,9 @@ int structureKindCount();
 // from here to the end of the list is a desert kind.
 int structureFirstDesertKind();
 
+// The first kind that only grows in the tundra (pines, tundra shrubs).
+int structureFirstTundraKind();
+
 // The patterns for one kind.
 const StructureSet& structureKind(int index);
 

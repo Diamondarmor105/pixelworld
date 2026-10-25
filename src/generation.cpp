@@ -1606,6 +1606,53 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             placements->push_back(placement);
         }
     }
+
+    // Tundra: pines and low shrubs stand on the frozen ground.
+    const int firstTundra = structureFirstTundraKind();
+    const int tundraKinds = structureFirstDesertKind() - firstTundra;
+    for (int i = 0; i < 5; ++i) {
+        const int kind = firstTundra + static_cast<int>(hash01(index, i, 141) * tundraKinds) % tundraKinds;
+        const int variant = static_cast<int>(hash01(index, i, 142) * 8.0f);
+        const StructurePattern& pattern = structurePattern(kind, variant);
+        const int patternWidth = structurePatternWidth(pattern);
+        const int patternHeight = pattern.rowCount;
+        if (patternWidth <= 0 || patternWidth >= Chunk::WIDTH - 12) continue;
+
+        const int room = Chunk::WIDTH - 12 - patternWidth;
+        const int lx = 6 + static_cast<int>(hash01(index, i, 143) * static_cast<float>(room));
+        const int wx = baseX + lx;
+
+        float bw[kBiomeCount];
+        biomeWeights(wx, kSeaRow, bw);
+        const float tundra = bw[static_cast<int>(BiomeType::Tundra)];
+        const Mat ground = landAt(wx).topMat;
+        if (tundra < 0.4f || ground != Mat::Snow) continue;
+
+        bool clashes = false;
+        for (const Footprint& f : footprints) {
+            if (lx + patternWidth - 1 >= f.left && lx <= f.right) clashes = true;
+        }
+        if (clashes) continue;
+
+        int base = 0;
+        for (int dx = 0; dx < patternWidth; ++dx) base = std::max(base, groundRow(baseX + lx + dx));
+        base = std::min(base, height - patternHeight - 1);
+        if (base < patternHeight) continue;
+
+        drawPattern(chunk, pattern, lx, base - 1);
+        footprints.push_back({lx, lx + patternWidth - 1});
+
+        if (placements) {
+            StructurePlacement placement;
+            placement.x = baseX + lx;
+            placement.y = base - 1;
+            placement.width = patternWidth;
+            placement.height = patternHeight;
+            placement.kind = kind;
+            placement.variant = variant;
+            placements->push_back(placement);
+        }
+    }
 }
 
 void generateChunksAround(World& world, int worldX, int radius) {

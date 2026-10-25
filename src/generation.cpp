@@ -1344,9 +1344,11 @@ Land landAt(int worldX) {
     land.altShare = std::min(1.0f, std::max(0.0f, (share - 0.42f) / 0.16f));
     land.topMat = topMatFor(dom, temp);
     land.altMat = topMatFor(sec, temp);
-    // The checker only mixes soft surfaces. A neighbour's bare rock would
-    // otherwise show up as stone inside the topsoil of the next biome.
-    if (isRockMat(land.topMat) || isRockMat(land.altMat)) land.altShare = 0.0f;
+    // The checker only mixes soft surfaces. A neighbour's bare rock or gravel
+    // would otherwise show up as stones inside the topsoil of the next biome.
+    const bool hard = isRockMat(land.topMat) || isRockMat(land.altMat) ||
+                      land.topMat == Mat::Gravel || land.altMat == Mat::Gravel;
+    if (hard) land.altShare = 0.0f;
 
     // Layer depths are a weighted average over every biome, so no single biome
     // "wins" a depth: the sand, snow and basalt layers thin out smoothly across
@@ -1454,6 +1456,14 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
     //    lumpy, the way a pocket of loose sand in the rock is. A smooth oval
     //    with an even edge looks like it was stamped out.
     static const Mat kPocketMaterials[3] = {Mat::Sand, Mat::Gravel, Mat::Clay};
+    // The bottom of each column's surface layers. A pocket is wide, so its
+    // edge can reach up into the soil of a neighbouring column; it stops at
+    // this row, so the soil and the sand body stay whole.
+    int zoneEnd[Chunk::WIDTH];
+    for (int lx = 0; lx < Chunk::WIDTH; ++lx) {
+        const Land land = landAt(baseX + lx);
+        zoneEnd[lx] = land.surface + land.soilRows + land.dirtRows;
+    }
     for (int i = 0; i < 6; ++i) {
         const int kindHash = static_cast<int>(hash01(index, i, 91));
         const float temp = climateTemperature(baseX + 10, 400);
@@ -1486,6 +1496,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
                 const int l = lx + dx;
                 const int y = centreY + dy;
                 if (l < 0 || l >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
+                if (y < zoneEnd[l]) continue;
                 const size_t cell = chunk.index(l, y);
                 // Never refill a cell that the cave carver has already hollowed.
                 if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;

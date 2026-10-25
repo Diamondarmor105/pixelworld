@@ -1664,19 +1664,24 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
         biomeWeights(wx, kSeaRow, bw);
         const Mat ground = landAt(wx).topMat;
 
-        // Water pool on plains.
+        // Water pool on plains: a bowl-shaped depression.
         if (pi == 0 && bw[static_cast<int>(BiomeType::Plains)] > 0.5f && ground == Mat::Grass) {
             const int poolHalf = 8 + static_cast<int>(hash01(index, pi, 202) * 8.0f);
             const int poolDepth = 4 + static_cast<int>(hash01(index, pi, 203) * 4.0f);
             const int centre = wx;
             int rimW = profileAt(centre - poolHalf);
             rimW = std::min(rimW, profileAt(centre + poolHalf));
+            rimW = std::min(rimW, profileAt(centre));
             if (profileAt(centre) - rimW >= 2) {
                 for (int dx = -poolHalf; dx <= poolHalf; ++dx) {
                     const int x = centre + dx;
                     const int localX = x - baseX;
                     if (localX < 0 || localX >= Chunk::WIDTH) continue;
-                    const int bed = rimW + poolDepth;
+                    // Bowl shape: depth is greatest at centre, zero at the rim.
+                    const float t = static_cast<float>(std::abs(dx)) / static_cast<float>(poolHalf);
+                    const int localDepth = static_cast<int>(std::lround(poolDepth * (1.0f - t * t)));
+                    if (localDepth <= 0) continue;
+                    const int bed = rimW + localDepth;
                     for (int y = rimW; y < bed && y < height - 3; ++y) {
                         const size_t cell = chunk.index(localX, y);
                         if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;
@@ -1687,7 +1692,7 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             }
         }
 
-        // Lava pool on volcanic ground.
+        // Lava pool on volcanic ground: an irregular stone cup.
         if (pi == 1 && bw[static_cast<int>(BiomeType::Volcanic)] > 0.5f && ground == Mat::Basalt) {
             const int poolHalf = 6 + static_cast<int>(hash01(index, pi, 204) * 6.0f);
             const int poolDepth = 3 + static_cast<int>(hash01(index, pi, 205) * 3.0f);
@@ -1695,10 +1700,14 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
             for (int dy = 0; dy <= poolDepth + 1; ++dy) {
                 for (int dx = -poolHalf - 1; dx <= poolHalf + 1; ++dx) {
                     const int x = centre + dx;
-                    const int y = profileAt(centre) + dy;
                     const int localX = x - baseX;
-                    if (localX < 0 || localX >= Chunk::WIDTH || y < 0 || y >= height - 3) continue;
-                    const bool wall = std::abs(dx) == poolHalf + 1 || dy == poolDepth + 1;
+                    if (localX < 0 || localX >= Chunk::WIDTH) continue;
+                    // Irregular wall: wobbles with noise so it is not a box.
+                    const float wallNoise = noise1(static_cast<float>(dx) * 0.3f + static_cast<float>(index) * 7.0f, kWorldSeed + 210u);
+                    const int wallH = poolDepth + 1 + static_cast<int>(wallNoise * 2.0f);
+                    const int y = profileAt(centre) + dy;
+                    if (y < 0 || y >= height - 3) continue;
+                    const bool wall = std::abs(dx) >= poolHalf + 1 - static_cast<int>(wallNoise * 2.0f) || dy >= wallH;
                     const size_t cell = chunk.index(localX, y);
                     chunk.cells[cell] = static_cast<uint8_t>(wall ? Mat::Stone : Mat::Lava);
                     chunk.mass[cell] = wall ? 0.0f : 1.0f;

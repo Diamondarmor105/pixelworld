@@ -1727,22 +1727,24 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
 
             const int poolDepth = 3 + static_cast<int>(hash01(index, attempt, 313) * 3.0f);
             const int centre = wx;
-            const int rimRow = profileAt(centre);
+            // The pool sits at the surface: rim is 1 row above ground so the
+            // lava is visible, not buried.
+            const int rimRow = profileAt(centre) - 1;
             // Carve an elliptical cup: for each column, compute how deep the
             // pool goes (deepest at centre, zero at the rim), with noise on
-            // the outline. Stone forms the rim and walls, lava fills inside.
-            for (int dx = -poolHalf - 2; dx <= poolHalf + 2; ++dx) {
+            // the outline. Stone forms the rim, lava fills inside.
+            for (int dx = -poolHalf - 1; dx <= poolHalf + 1; ++dx) {
                 const int x = centre + dx;
                 const int localX = x - baseX;
                 if (localX < 0 || localX >= Chunk::WIDTH) continue;
                 const float t = static_cast<float>(dx) / static_cast<float>(poolHalf);
-                if (std::abs(t) > 1.15f) continue;
+                if (std::abs(t) > 1.1f) continue;
                 const float ellipse = 1.0f - t * t;
                 if (ellipse <= 0.0f) continue;
                 const float n = noise1(static_cast<float>(dx) * 0.3f + static_cast<float>(index) * 7.0f, kWorldSeed + 320u);
                 const int localDepth = static_cast<int>(std::lround(poolDepth * ellipse * (0.7f + 0.6f * n)));
                 if (localDepth <= 0) continue;
-                // Stone rim at the top.
+                // Stone rim at the top (one row).
                 const int rimY = rimRow;
                 const size_t rimCell = chunk.index(localX, rimY);
                 if (chunk.cells[rimCell] != static_cast<uint8_t>(Mat::Air)) {
@@ -1755,25 +1757,6 @@ void generateChunk(int index, Chunk& chunk, std::vector<StructurePlacement>* pla
                     if (chunk.cells[cell] == static_cast<uint8_t>(Mat::Air)) continue;
                     chunk.cells[cell] = static_cast<uint8_t>(Mat::Lava);
                     chunk.mass[cell] = 1.0f;
-                }
-                // Stone wall on the sides (one cell thick) where the pool is deep.
-                if (localDepth >= 2) {
-                    for (int side = 0; side < 2; ++side) {
-                        int sx = (side == 0) ? x - 1 : x + 1;
-                        int slocalX = sx - baseX;
-                        if (slocalX < 0 || slocalX >= Chunk::WIDTH) continue;
-                        // Only wall where the neighbour is shallower.
-                        float nt = static_cast<float>(side == 0 ? dx - 1 : dx + 1) / static_cast<float>(poolHalf);
-                        if (std::abs(nt) > 1.15f) {
-                            for (int y = rimY; y < rimY + 1 + localDepth && y < height - 3; ++y) {
-                                const size_t cell = chunk.index(slocalX, y);
-                                if (chunk.cells[cell] != static_cast<uint8_t>(Mat::Air)) {
-                                    chunk.cells[cell] = static_cast<uint8_t>(Mat::Stone);
-                                    chunk.mass[cell] = 0.0f;
-                                }
-                            }
-                        }
-                    }
                 }
             }
             break;
